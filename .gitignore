@@ -1,0 +1,31 @@
+# Rust / Cargo
+target/
+**/*.rs.bk
+Cargo.lock.orig
+
+# Node / 前端
+node_modules/
+dist/
+*.local
+.vite/
+
+# Tauri
+apps/desktop/src-tauri/gen/schemas/
+
+# 数据库与本地运行产物（绝不入库）
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# IDE / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 临时
+*.log
+.tmp/

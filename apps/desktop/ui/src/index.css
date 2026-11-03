@@ -1,0 +1,30 @@
+@import "tailwindcss";
+
+/* TraceNest 基础样式：深色 Fluent 风格（M0 固定深色主题，浅色主题在后续里程碑） */
+:root {
+  color-scheme: dark;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: "Segoe UI Variable", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  background: #1a1b1e;
+  color: #e8eaed;
+  font-size: 14px;
+  overflow: hidden;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #35373c;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

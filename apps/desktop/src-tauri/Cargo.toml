@@ -1,0 +1,21 @@
+[package]
+name = "tracenest-desktop"
+description = "TraceNest 桌面应用（Tauri 2 壳 + IPC 命令层）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "tracenest_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+tracenest-core = { path = "../../../crates/core" }
+tracenest-database = { path = "../../../crates/database" }
+tracenest-platform = { path = "../../../crates/platform" }
+tauri = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
