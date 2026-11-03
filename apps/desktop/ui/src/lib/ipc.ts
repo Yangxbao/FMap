@@ -107,6 +107,11 @@ export const api = {
   listVolumes: () => invoke<VolumeInfo[]>("list_volumes"),
   getDbStats: () => invoke<DbStats>("get_db_stats"),
   scanStart: (roots: string[]) => invoke<ScanProgress>("scan_start", { roots }),
+  runAttribution: () => invoke<unknown>("run_attribution"),
+  getToolsOverview: () => invoke<unknown>("get_tools_overview"),
+  getToolDetail: (toolKey: string) => invoke<unknown>("get_tool_detail", { toolKey }),
+  setRuleEnabled: (ruleId: number, enabled: boolean) =>
+    invoke<boolean>("set_rule_enabled", { ruleId, enabled }),
   scanStatus: (scanId: number) => invoke<ScanProgress>("scan_status", { scanId }),
   scanCancel: (scanId: number) => invoke<boolean>("scan_cancel", { scanId }),
 };

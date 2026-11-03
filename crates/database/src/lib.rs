@@ -10,6 +10,8 @@
 //! - 只存元数据（路径/大小/时间/归属），**绝不存文件内容**
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
 
+pub mod attribution_pass;
+pub mod rules_loader;
 pub mod scan_writer;
 
 use std::path::{Path, PathBuf};
@@ -23,8 +25,11 @@ use tracenest_core::CoreError;
 /// 保证 v1 旧库与全新库收敛到同一结构。
 pub const SCHEMA_SQL: &str = include_str!("../../../tests/schema.sql");
 
+/// 内置 AI 工具规则包 v1（来源 rules/builtin-rules-v1.json，含来源与依据说明）。
+pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
+
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -132,7 +137,27 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("写入 schema_version=2 失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 3 { ... }
+        // v2 → v3：规则表增加 enabled（启用/禁用）、weight（信号权重）、evidence（规则依据说明）。
+        // 仍为 ALTER ADD COLUMN 非破坏操作，历史数据不动。
+        if current < 3 {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
+                     ALTER TABLE rules ADD COLUMN weight REAL;
+                     ALTER TABLE rules ADD COLUMN evidence TEXT;
+                     ALTER TABLE tools ADD COLUMN kind TEXT;",
+                )
+                .map_err(|e| CoreError::Database(format!("应用 schema v3 失败: {e}")))?;
+            self.conn
+                .execute(
+                    "INSERT INTO meta(key,value) VALUES('schema_version','3')
+                     ON CONFLICT(key) DO UPDATE SET value='3'",
+                    [],
+                )
+                .map_err(|e| CoreError::Database(format!("写入 schema_version=3 失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 4 { ... }
 
         let actual: i64 = self
             .conn
@@ -463,10 +488,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为2_各表为空() {
+    fn 空库初始化_版本为3_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 2);
+        assert_eq!(s.schema_version, 3);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -538,14 +563,14 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                2,
+                3,
                 "二次打开不应重复迁移"
             );
         }
     }
 
     #[test]
-    fn v1旧库迁移到v2_历史数据保留() {
+    fn v1旧库迁移到最新版_历史数据保留() {
         // 模拟一个真实的 v1 旧库：v1 结构 + 一条 v1 扫描记录 + 若干路径
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("legacy.db");
@@ -576,7 +601,11 @@ mod tests {
         }
         // 旧库被新版打开 → 自动迁移到 v2
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 2, "旧库应迁移到 v2");
+        assert_eq!(
+            db.stats().unwrap().schema_version,
+            3,
+            "旧库应迁移到最新版本"
+        );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
         // 旧 running 扫描可被恢复函数回收（instance_id 为 NULL）
         let recovered = db.recover_orphaned_scans().unwrap();

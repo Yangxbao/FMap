@@ -21,19 +21,19 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn backend(msg: impl Into<String>) -> Self {
+    pub fn backend(msg: impl Into<String>) -> Self {
         Self {
             kind: "backend".into(),
             message: msg.into(),
         }
     }
-    fn database(msg: impl Into<String>) -> Self {
+    pub fn database(msg: impl Into<String>) -> Self {
         Self {
             kind: "database".into(),
             message: msg.into(),
         }
     }
-    fn platform(msg: impl Into<String>) -> Self {
+    pub fn platform(msg: impl Into<String>) -> Self {
         Self {
             kind: "platform".into(),
             message: msg.into(),

@@ -10,6 +10,7 @@
 //! 3. 不执行任何文件删除/移动/重命名
 
 mod commands;
+mod commands_m2;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -102,6 +103,17 @@ pub fn run() {
                                     eprintln!("[FMap] 启动恢复失败（不影响应用启动）: {e}");
                                 }
                             }
+                            // 加载内置 AI 工具规则包（幂等；规则数据与引擎分离）
+                            match db.load_builtin_rule_pack() {
+                                Ok(stats) if stats.skipped_reason.is_none() => {
+                                    eprintln!(
+                                        "[FMap] 内置规则包已加载: {} v{} ({} 工具 / {} 规则)",
+                                        stats.pack_name, stats.version, stats.tools, stats.rules
+                                    );
+                                }
+                                Ok(_) => {}
+                                Err(e) => eprintln!("[FMap] 规则包加载失败（不影响扫描）: {e}"),
+                            }
                             *state.db_path.lock().unwrap() = Some(db_path);
                             *state.db.lock().unwrap() = Some(db);
                         }
@@ -125,6 +137,10 @@ pub fn run() {
             commands::scan_start,
             commands::scan_status,
             commands::scan_cancel,
+            commands_m2::run_attribution,
+            commands_m2::get_tools_overview,
+            commands_m2::get_tool_detail,
+            commands_m2::set_rule_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("FMap 桌面应用运行失败");

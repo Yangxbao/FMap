@@ -212,7 +212,9 @@ pub fn run_scan_to_db(
             }
             Err(e) => {
                 last_err = Some(e);
-                std::thread::sleep(std::time::Duration::from_millis(2000 * (attempt as u64 + 1)));
+                std::thread::sleep(std::time::Duration::from_millis(
+                    2000 * (attempt as u64 + 1),
+                ));
             }
         }
     }

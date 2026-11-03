@@ -1,0 +1,66 @@
+{
+  "pack_name": "builtin",
+  "version": "1.0.0",
+  "os_default": "*",
+  "tools": [
+    { "key": "claude-code", "name": "Claude Code", "vendor": "Anthropic", "kind": "ai-coding-cli", "color": "#d97757" },
+    { "key": "codex", "name": "OpenAI Codex", "vendor": "OpenAI", "kind": "ai-coding-cli", "color": "#10a37f" },
+    { "key": "cursor", "name": "Cursor", "vendor": "Anysphere", "kind": "ai-ide", "color": "#7b83eb" },
+    { "key": "gemini-cli", "name": "Gemini CLI", "vendor": "Google", "kind": "ai-coding-cli", "color": "#4285f4" },
+    { "key": "vscode", "name": "VS Code", "vendor": "Microsoft", "kind": "ide", "color": "#2ea3dc" },
+    { "key": "windsurf", "name": "Windsurf", "vendor": "Codeium", "kind": "ai-ide", "color": "#97ce7e" },
+    { "key": "cline", "name": "Cline", "vendor": "Cline Bot Inc.", "kind": "ai-extension", "color": "#c96fcb" },
+    { "key": "roo-code", "name": "Roo Code", "vendor": "RooVeterinaryInc.(开源)", "kind": "ai-extension", "color": "#6cc04a" },
+    { "key": "continue", "name": "Continue", "vendor": "Continue Dev", "kind": "ai-extension", "color": "#a377d6" },
+    { "key": "zcode", "name": "ZCode", "vendor": "未知（本机观察）", "kind": "ai-coding-cli", "color": "#b07de8" },
+    { "key": "workbuddy", "name": "WorkBuddy / CodeBuddy Code", "vendor": "腾讯（品牌确认，见 AI_TOOLS_DIRECTORIES.md）", "kind": "ai-workbench", "color": "#f7b32b" },
+    { "key": "dsh", "name": "DSH (DeepSeek Harness)", "vendor": "DeepSeek（官方仓库确认，路径未官方记载）", "kind": "ai-agent", "color": "#ef6c6c" },
+    { "key": "doubao", "name": "豆包（桌面版）", "vendor": "字节跳动", "kind": "ai-assistant", "color": "#4dd0e1" },
+    { "key": "ollama", "name": "Ollama", "vendor": "Ollama", "kind": "model-runtime", "color": "#8f8f8f" },
+    { "key": "huggingface", "name": "Hugging Face 缓存", "vendor": "Hugging Face", "kind": "model-cache", "color": "#ffc107" }
+  ],
+  "rules": [
+    { "tool": "claude-code", "kind": "dir", "os": "*", "pattern": ".claude", "confidence": "verified", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://code.claude.com/docs/en/claude-directory", "source": "官方文档 code.claude.com（本项目 AI_TOOLS_DIRECTORIES.md 全文核验）", "evidence": "Claude Code 官方数据目录：会话/记忆/插件均存放于此" },
+    { "tool": "claude-code", "kind": "dir", "os": "*", "pattern": ".claude/projects", "confidence": "verified", "kind_tag": "session", "risk_level": "caution", "doc_url": "https://code.claude.com/docs/en/claude-directory", "source": "官方文档", "evidence": "按项目编码存放的会话转录（含隐私内容，默认不读取）" },
+    { "tool": "claude-code", "kind": "signal", "os": "*", "pattern": "CLAUDE.md", "location": "project-root", "confidence": "likely", "weight": 0.9, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://code.claude.com/docs/en/claude-directory", "source": "官方文档（项目级指令文件）", "evidence": "CLAUDE.md 是 Claude Code 专属性最强的项目信号文件" },
+    { "tool": "claude-code", "kind": "signal", "os": "*", "pattern": "CLAUDE.local.md", "location": "project-root", "confidence": "likely", "weight": 0.9, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://code.claude.com/docs/en/claude-directory", "source": "官方文档", "evidence": "Claude Code 本地版项目指令文件" },
+
+    { "tool": "codex", "kind": "dir", "os": "*", "pattern": ".codex", "confidence": "verified", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://github.com/openai/codex", "source": "官方仓库 openai/codex + CODEX_HOME 约定", "evidence": "Codex 主数据目录（config.toml/auth.json/SQLite 存储等，本机已验证）" },
+    { "tool": "codex", "kind": "signal", "os": "*", "pattern": "AGENTS.md", "location": "project-root", "confidence": "possible", "weight": 0.5, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://agents.md", "source": "AGENTS.md 开放约定（多工具共用，非 Codex 专属）", "evidence": "AGENTS.md 为跨工具开放约定，仅作为弱信号，不单独构成 Codex 归属" },
+
+    { "tool": "cursor", "kind": "dir", "os": "*", "pattern": ".cursor", "confidence": "verified", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://cursor.com/docs/context/mcp", "source": "官方文档（~/.cursor/mcp.json 等）", "evidence": "Cursor 用户级配置目录" },
+    { "tool": "cursor", "kind": "dir", "os": "win", "pattern": "AppData/Roaming/Cursor", "confidence": "verified", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://cursor.com/docs", "source": "VSCode-fork 惯例 + 论坛实证（state.vscdb 可达 50-100GB）", "evidence": "Cursor Chromium 用户数据目录" },
+    { "tool": "cursor", "kind": "signal", "os": "*", "pattern": ".cursorrules", "location": "project-root", "confidence": "likely", "weight": 0.85, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://cursor.com/docs", "source": "Cursor 项目规则文件（社区+文档广泛记载）", "evidence": "Cursor 专属性项目规则文件" },
+    { "tool": "cursor", "kind": "signal", "os": "*", "pattern": ".cursorignore", "location": "project-root", "confidence": "likely", "weight": 0.8, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://cursor.com/docs", "source": "Cursor 官方文档", "evidence": "Cursor 索引忽略文件" },
+
+    { "tool": "gemini-cli", "kind": "dir", "os": "*", "pattern": ".gemini", "confidence": "verified", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/settings.md", "source": "官方仓库 docs/cli/settings.md", "evidence": "Gemini CLI 用户设置/凭据/检查点目录" },
+    { "tool": "gemini-cli", "kind": "signal", "os": "*", "pattern": "GEMINI.md", "location": "project-root", "confidence": "likely", "weight": 0.85, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://github.com/google-gemini/gemini-cli", "source": "官方 README（项目级上下文文件）", "evidence": "Gemini CLI 专属性项目上下文文件" },
+
+    { "tool": "vscode", "kind": "dir", "os": "win", "pattern": "AppData/Roaming/Code", "confidence": "verified", "kind_tag": "config", "risk_level": "safe", "doc_url": "https://code.visualstudio.com/docs", "source": "VSCode 官方文档（用户数据目录惯例）", "evidence": "VS Code 用户数据目录（非 AI 专属，kind=ide）" },
+    { "tool": "vscode", "kind": "signal", "os": "*", "pattern": ".vscode", "location": "project-root", "confidence": "possible", "weight": 0.4, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://code.visualstudio.com/docs", "source": "VSCode 惯例（极常见，弱信号）", "evidence": ".vscode 目录过于常见，仅作弱信号" },
+
+    { "tool": "windsurf", "kind": "dir", "os": "*", "pattern": ".windsurf", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://docs.windsurf.com", "source": "Windsurf 官方文档（待本机验证）", "evidence": "Windsurf 用户目录（约定路径）" },
+    { "tool": "windsurf", "kind": "dir", "os": "win", "pattern": "AppData/Roaming/Windsurf", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://docs.windsurf.com", "source": "Windsurf 官方文档（待本机验证）", "evidence": "Windsurf 应用数据目录" },
+
+    { "tool": "cline", "kind": "dir", "os": "*", "pattern": ".cline", "confidence": "likely", "kind_tag": "config", "risk_level": "safe", "doc_url": "https://docs.cline.bot", "source": "Cline 官方文档（待本机验证）", "evidence": "Cline 全局任务/设置目录" },
+    { "tool": "cline", "kind": "signal", "os": "*", "pattern": ".clinerules", "location": "project-root", "confidence": "likely", "weight": 0.8, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://docs.cline.bot", "source": "Cline 官方文档", "evidence": "Cline 项目规则目录/文件" },
+
+    { "tool": "roo-code", "kind": "signal", "os": "*", "pattern": ".roo", "location": "project-root", "confidence": "likely", "weight": 0.8, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://docs.roocode.com", "source": "Roo Code 官方文档（待本机验证）", "evidence": "Roo Code 项目模式目录" },
+    { "tool": "roo-code", "kind": "signal", "os": "*", "pattern": ".roorules", "location": "project-root", "confidence": "likely", "weight": 0.8, "kind_tag": "project", "risk_level": "safe", "doc_url": "https://docs.roocode.com", "source": "Roo Code 官方文档", "evidence": "Roo Code 项目规则文件" },
+
+    { "tool": "continue", "kind": "dir", "os": "*", "pattern": ".continue", "confidence": "likely", "kind_tag": "config", "risk_level": "safe", "doc_url": "https://docs.continue.dev", "source": "Continue 官方文档（待本机验证）", "evidence": "Continue 全局配置/会话目录" },
+
+    { "tool": "zcode", "kind": "dir", "os": "*", "pattern": ".zcode", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "", "source": "本机观察（顶层结构 cli/v2/skills 等）+ 无公开文档【待验证】", "evidence": "ZCode CLI 主目录（本机真实存在，语义为推断）" },
+
+    { "tool": "workbuddy", "kind": "dir", "os": "*", "pattern": ".workbuddy", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://workbuddy.ai", "source": "本机观察 + workbuddy.ai 品牌确认（内部布局待验证）", "evidence": "WorkBuddy（腾讯 CodeBuddy Code 品牌）主目录，本机真实存在" },
+    { "tool": "workbuddy", "kind": "dir", "os": "*", "pattern": ".codebuddy", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://workbuddy.ai", "source": "第三方工具文档交叉引用 + 本机扫描发现 .codebuddy 目录", "evidence": "CodeBuddy 原品牌目录（双路径与 .workbuddy 互证）" },
+
+    { "tool": "dsh", "kind": "dir", "os": "*", "pattern": ".dsh", "confidence": "likely", "kind_tag": "config", "risk_level": "caution", "doc_url": "https://github.com/deepseek-ai/deepseek-harness", "source": "官方仓库确认身份（DeepSeek Harness），路径为本机观察【待验证】", "evidence": "DSH 主目录：sessions/attachments/llm-deepseek 等（本机真实存在）" },
+
+    { "tool": "doubao", "kind": "dir", "os": "win", "pattern": "AppData/Local/Doubao", "confidence": "likely", "kind_tag": "config", "risk_level": "safe", "doc_url": "", "source": "本机验证（Application + User Data 结构）+ Electron 惯例", "evidence": "豆包桌面版应用数据（Chromium 布局）" },
+    { "tool": "doubao", "kind": "dir", "os": "win", "pattern": "AppData/Roaming/Doubao", "confidence": "likely", "kind_tag": "config", "risk_level": "safe", "doc_url": "", "source": "本机验证（public_config.json）", "evidence": "豆包桌面版 Roaming 配置" },
+
+    { "tool": "ollama", "kind": "dir", "os": "*", "pattern": ".ollama", "confidence": "verified", "kind_tag": "model_cache", "risk_level": "safe", "doc_url": "https://github.com/ollama/ollama/blob/main/docs/faq.md", "source": "Ollama 官方 FAQ", "evidence": "Ollama 模型存储（可达数十 GB）" },
+    { "tool": "huggingface", "kind": "dir", "os": "*", "pattern": ".cache/huggingface", "confidence": "verified", "kind_tag": "model_cache", "risk_level": "safe", "doc_url": "https://huggingface.co/docs/huggingface_hub/guides/manage-cache", "source": "HF 官方文档", "evidence": "HuggingFace 模型缓存（可达数百 GB）" }
+  ]
+}

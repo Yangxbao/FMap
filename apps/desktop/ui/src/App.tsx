@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import { Layout } from "./components/Layout";
 import { Overview } from "./pages/Overview";
-import { DiskMap, Files, Tools, Projects, History, Monitor, Reports } from "./pages/Placeholders";
+import { Tools } from "./pages/Tools";
+import { DiskMap, Files, Projects, History, Monitor, Reports } from "./pages/Placeholders";
 import { Settings } from "./pages/Settings";
 import { api, backendAvailable, IpcError, type SystemStatus } from "./lib/ipc";
 import { pageFromHash, type PageId } from "./lib/format";
