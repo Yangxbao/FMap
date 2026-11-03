@@ -1,15 +1,15 @@
 # 许可证审计（LICENSE_AUDIT）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
-> 目的：确保 TraceNest 开源发布时合规使用第三方成果，避免许可证污染。
+> 目的：确保 FMap 开源发布时合规使用第三方成果，避免许可证污染。
 
 ---
 
 ## 1. 竞品/参考项目许可证
 
-| 项目 | 许可证 | 对 TraceNest 的含义 | 状态 |
+| 项目 | 许可证 | 对 FMap 的含义 | 状态 |
 |---|---|---|---|
-| WinDirStat (windirstat/windirstat) | **GPL-3.0+** | ⚠️ 可以使用其软件、学习其思路，但**禁止复制其源代码**进 TraceNest（会强制本项目变 GPL）。treemap 思想本身不受版权保护，可安全借鉴设计理念 | ✅ 已验证（api.github.com，2026-11-03） |
+| WinDirStat (windirstat/windirstat) | **GPL-3.0+** | ⚠️ 可以使用其软件、学习其思路，但**禁止复制其源代码**进 FMap（会强制本项目变 GPL）。treemap 思想本身不受版权保护，可安全借鉴设计理念 | ✅ 已验证（api.github.com，2026-11-03） |
 | SquirrelDisk (adileo/squirreldisk) | **AGPL-3.0** | ⚠️ 最强传染性（网络服务场景也触发）。watch/agent 模式只看思路不抄实现 | ✅ 已验证（api.github.com） |
 | duvis (yamadashy/duvis) | **MIT** | ✅ 分类规则表与继承规则可 fork（保留版权声明），叠加 AI 工具映射层 | ✅ 已验证（api.github.com） |
 | diskplot (rodrigokiller/diskplot) | **MIT** | ✅ 扫描/快照/Live 范式可全文精读移植 | ✅ 已验证（api.github.com） |
@@ -34,11 +34,11 @@
 | SQLite | Public Domain | rusqlite 绑定为 MIT |
 | notify（核心） | CC0-1.0 | 公有领域；debouncer-full/file-id 等伴生 crate 为 MIT OR Apache-2.0 |
 | serde / rayon / tokio（如用） | MIT OR Apache-2.0 | Rust 生态标准双许可 |
-| reqwest 等（若引入） | MIT OR Apache-2.0 | 注意：TraceNest 无网络出站需求，原则上不引入网络库（见 SECURITY.md） |
+| reqwest 等（若引入） | MIT OR Apache-2.0 | 注意：FMap 无网络出站需求，原则上不引入网络库（见 SECURITY.md） |
 
 > 结论：建议的技术栈**没有 GPL/AGPL 传染风险**。注意 Tauri 的 Windows 安装器模板（NSIS/WiX）许可证为 MIT/Zlib 级别，无问题。
 
-## 3. TraceNest 自身许可证建议
+## 3. FMap 自身许可证建议
 
 两个候选（最终由用户决定）：
 

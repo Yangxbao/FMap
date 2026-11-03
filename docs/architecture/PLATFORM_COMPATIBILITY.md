@@ -1,4 +1,4 @@
-# TraceNest 跨平台兼容性分析（PLATFORM_COMPATIBILITY）
+# FMap 跨平台兼容性分析（PLATFORM_COMPATIBILITY）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 结论标注：✅=已有证据（TECH_FEASIBILITY 引用来源）｜❓=待验证｜⚠️=有已知限制
@@ -37,7 +37,7 @@
 ## 3. macOS（次优先）
 
 - **FSEvents**：无需管理员即可 watch；per-file 粒度需 `kFSEventStreamCreateFlagFileEvents`；存在合并/延迟（coalescing）⚠️。
-- **TCC 权限**：首次访问 `~/Desktop`、`~/Documents`、`~/Downloads` 及外置卷会触发系统授权弹窗 ⚠️——TraceNest 的"用户显式选择扫描目录"流程天然契合（用户选择 = 授权路径）。
+- **TCC 权限**：首次访问 `~/Desktop`、`~/Documents`、`~/Downloads` 及外置卷会触发系统授权弹窗 ⚠️——FMap 的"用户显式选择扫描目录"流程天然契合（用户选择 = 授权路径）。
 - **非沙盒分发**（直接 GitHub 下载 .app）避免 App Store 沙盒限制；自分发 + 公证（notarization）需要 Apple 开发者账号（预算决策，交用户）。
 - **目录差异**：多数 CLI 工具用 `~/.xxx`（与 Linux 一致），桌面应用在 `~/Library/Application Support`。
 

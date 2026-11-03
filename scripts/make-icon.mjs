@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * 生成 TraceNest 应用图标（Windows ICO，32x32 32bpp BMP 帧）。
- * M0 临时方案：程序化生成一个蓝紫渐变 + "N" 缺省图形；
+ * 生成 FMap 应用图标（Windows ICO，32x32 32bpp BMP 帧）。
+ * M0 临时方案：程序化生成一个蓝紫渐变 + "F" 缺省图形；
  * 正式 Logo 后续替换（重新运行本脚本即可）。
  * 用法：node scripts/make-icon.mjs
  */
@@ -12,19 +12,18 @@ import { fileURLToPath } from "node:url";
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "apps", "desktop", "src-tauri", "icons");
 const SIZE = 32;
 
-/** 取 [x,y] 处的 BGRA 像素：蓝→紫对角渐变，中间画一个白色"N"笔画。 */
+/** 取 [x,y] 处的 BGRA 像素：蓝→紫对角渐变，中间画一个白色"F"笔画。 */
 function pixel(x, y) {
   const t = (x + y) / (2 * SIZE);
   // 深蓝 #0b57d0 → 紫 #8a7bf0
   const r = Math.round(11 + (138 - 11) * t);
   const g = Math.round(87 + (123 - 87) * t);
   const b = Math.round(208 + (240 - 208) * t);
-  // "N" 的两竖一斜（粗 3px）
-  const bar = (px, py) => px >= 8 && px <= 23 && ((py >= 7 && py <= 8) || (py >= 23 && py <= 24));
+  // "F" 的一竖两横（粗 3px）
   const left = x >= 8 && x <= 10 && y >= 7 && y <= 24;
-  const right = x >= 21 && x <= 23 && y >= 7 && y <= 24;
-  const diag = bar(x, y) && Math.abs(x - (8 + ((y - 7) * 13) / 17)) <= 1.5;
-  if (left || right || diag) return [255, 255, 255, 255]; // BGRA 的 BGR 分量先占位，下面统一
+  const topBar = y >= 7 && y <= 9 && x >= 8 && x <= 21;
+  const midBar = y >= 14 && y <= 16 && x >= 8 && x <= 18;
+  if (left || topBar || midBar) return [255, 255, 255, 255];
   return [b, g, r, 255];
 }
 

@@ -43,7 +43,7 @@
 | 决策 | 落地位置 |
 |---|---|
 | D1 双许可证 MIT OR Apache-2.0 | LICENSE-MIT + LICENSE-APACHE + 各 Cargo.toml `license.workspace` |
-| D2 保持当前工作区 | 已在 `TraceNest/` 下 git init（main 分支，1 个初始提交，无远程） |
+| D2 保持当前工作区 | 已在 `FMap/` 下 git init（main 分支，1 个初始提交，无远程） |
 | D3 默认扫描所有磁盘 | 设置页默认策略展示 + M1 扫描器设计约束（卷自动发现、权限不足继续） |
 | D4 隐私功能默认关闭、逐项授权 | 设置页明示；架构上 M0–M1 无相关代码路径 |
 

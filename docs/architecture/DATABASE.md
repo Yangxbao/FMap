@@ -1,8 +1,8 @@
-# TraceNest 数据库设计（DATABASE）
+# FMap 数据库设计（DATABASE）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 引擎：SQLite（rusqlite + bundled），WAL 模式，`foreign_keys=ON`
-> 位置：`%APPDATA%/TraceNest/tracenest.db`（设置中可更改位置）
+> 位置：`%APPDATA%/FMap/tracenest.db`（设置中可更改位置）
 
 ---
 

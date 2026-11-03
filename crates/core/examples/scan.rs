@@ -18,7 +18,7 @@ fn main() {
     let expect_files: Option<u64> = args.get(2).and_then(|s| s.parse().ok());
     let expect_dirs: Option<u64> = args.get(3).and_then(|s| s.parse().ok());
 
-    println!("[TraceNest scan] 目标: {path}");
+    println!("[FMap scan] 目标: {path}");
     let t = Instant::now();
     let s = scan_root(
         std::path::Path::new(&path),

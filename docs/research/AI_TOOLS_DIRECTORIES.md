@@ -40,7 +40,7 @@
 | 扩展 | `~/.codex\plugins\ skills\ vendor_imports\ .sandbox*  .tmp\` | 同 | [本机已验证] | 本机 `ls` |
 | 项目工作目录 | 用户自选（`--cd`/工作目录） | 同 | [官方文档] | codex 文档 |
 
-⚠️ **重要异常**：本机**完全不存在** `sessions/`、`log/`、`history.jsonl` → 新版可能已把会话/状态迁入 SQLite。**TraceNest 探测器必须做"JSONL + SQLite"双分支**（[待验证]：SQLite 表结构逆向）。
+⚠️ **重要异常**：本机**完全不存在** `sessions/`、`log/`、`history.jsonl` → 新版可能已把会话/状态迁入 SQLite。**FMap 探测器必须做"JSONL + SQLite"双分支**（[待验证]：SQLite 表结构逆向）。
 
 ## 2. Claude Code（Anthropic）——信息最全，官方文档整页可用
 
@@ -57,7 +57,7 @@
 | 临时区 | `%TEMP%\claude\<project>\<session>\scratchpad\`（`CLAUDE_CODE_TMPDIR` 可改） | `/tmp/claude/...` | [官方文档] |
 | 本机状态 | `~/.claude` 仅有 `settings.json`；`.claude.json`、`projects/` 均不存在 | — | [本机已验证] |
 
-**对 TraceNest 的意义**：Claude Code 是**唯一有官方编码规则的会话↔项目映射**——F5（会话映射）从这里开始最稳。隐私红线：`.jsonl` 是真实聊天记录（含系统提示/工具定义），默认只读元数据。
+**对 FMap 的意义**：Claude Code 是**唯一有官方编码规则的会话↔项目映射**——F5（会话映射）从这里开始最稳。隐私红线：`.jsonl` 是真实聊天记录（含系统提示/工具定义），默认只读元数据。
 
 ## 3. Cursor（Anysphere）
 
@@ -70,7 +70,7 @@
 | 安装/更新 | `%LOCALAPPDATA%\Programs\cursor`；`%LOCALAPPDATA%\cursor-updater` | [社区报告]【待验证】 | 惯例 |
 | **最大缓存点** | `User\globalStorage\state.vscdb`（SQLite，`cursorDiskKV` 表）：论坛实证**单日增长 1GB**、有用户总占用 **125GB**；清理必须避开 state.vscdb（设置与历史同库）；`CachedData` 陈旧目录无自动清理 | [社区报告] | [论坛实证帖](https://forum.cursor.com/t/151747)、[50–100GB 案例](https://forum.cursor.com/t/agent-chat-db-state-vscdb-grows-without-bound-50-bubble-rows-per-visible-message-96-gb-and-climbing/170508/9) |
 
-→ TraceNest"大文件哨兵"的**第一优先级目标**。
+→ FMap"大文件哨兵"的**第一优先级目标**。
 
 ## 4. Gemini CLI（Google）
 

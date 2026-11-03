@@ -1,6 +1,6 @@
 [package]
 name = "tracenest-database"
-description = "TraceNest SQLite 存储层（rusqlite + WAL + 迁移管理）"
+description = "FMap SQLite 存储层（rusqlite + WAL + 迁移管理）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

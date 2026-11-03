@@ -1,4 +1,4 @@
-# TraceNest 系统设计（SYSTEM_DESIGN）
+# FMap 系统设计（SYSTEM_DESIGN）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 依赖阅读：[TECH_FEASIBILITY.md](../research/TECH_FEASIBILITY.md)（能力边界）、[DATABASE.md](DATABASE.md)（存储）、[SECURITY.md](SECURITY.md)（安全）
@@ -29,7 +29,7 @@
 │  └────────────────────────────────────────────┘              │
 └─────────────────────────────────────────────────────────────┘
    本地文件系统（只读访问）           本地 SQLite 数据库
-   C:\ D:\ E:\ ...                   %APPDATA%/TraceNest/tracenest.db
+   C:\ D:\ E:\ ...                   %APPDATA%/FMap/tracenest.db
 ```
 
 **选型理由**（与用户建议的技术栈一致）：
@@ -127,7 +127,7 @@
 ## 6. 目录结构（规划，V0.1 开工时创建）
 
 ```
-TraceNest/
+FMap/
 ├─ src/                    # React + TS 前端
 │  ├─ pages/               # 10 个页面
 │  ├─ components/          # 通用组件（VTable, Treemap, ConfidenceBadge...）

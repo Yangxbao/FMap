@@ -68,7 +68,7 @@ export function Monitor() {
 export function Reports() {
   return (
     <Page title="扫描报告" sub="工具占用 / 卸载安全清单 / 空间变化报告">
-      <DevPlaceholder feature="报告中心" milestone="V0.2" note="导出由系统另存为对话框完成，TraceNest 不擅自写入任何位置。" />
+      <DevPlaceholder feature="报告中心" milestone="V0.2" note="导出由系统另存为对话框完成，FMap 不擅自写入任何位置。" />
     </Page>
   );
 }

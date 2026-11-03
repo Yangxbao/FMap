@@ -1,4 +1,4 @@
-//! # TraceNest 核心类型（tracenest-core）
+//! # FMap 核心类型（tracenest-core）
 //!
 //! 存放与操作系统无关的共享类型与纯逻辑，供 `database` / `platform` /
 //! 桌面应用引用。**本 crate 禁止出现任何删除/移动/重命名文件的 API**——
@@ -9,7 +9,7 @@ pub mod scanner;
 use serde::{Deserialize, Serialize};
 
 /// 应用基本信息（前端"关于"与状态栏展示用）。
-pub const APP_NAME: &str = "TraceNest";
+pub const APP_NAME: &str = "FMap";
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// 扫描任务的七态模型（与产品需求"不允许把未扫描区域显示成扫描完成"对应）。

@@ -1,4 +1,4 @@
-//! # TraceNest 数据库层（tracenest-database）
+//! # FMap 数据库层（tracenest-database）
 //!
 //! 职责：
 //! - 数据库文件初始化与连接管理（WAL 模式，支持"扫描批量写 + UI 只读"并发）

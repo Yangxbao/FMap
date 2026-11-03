@@ -1,6 +1,6 @@
 [package]
 name = "tracenest-core"
-description = "TraceNest 核心类型与平台无关逻辑（扫描状态、共享错误类型等）"
+description = "FMap 核心类型与平台无关逻辑（扫描状态、共享错误类型等）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

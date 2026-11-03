@@ -1,4 +1,4 @@
-//! # TraceNest 平台抽象层（tracenest-platform）
+//! # FMap 平台抽象层（tracenest-platform）
 //!
 //! 目标：把"操作系统差异"收敛在一个 trait 后面，让上层（扫描器/UI）
 //! 不接触 Win32/FSEvents/inotify 细节。

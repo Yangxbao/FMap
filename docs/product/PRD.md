@@ -1,4 +1,4 @@
-# TraceNest 产品需求文档（PRD）
+# FMap 产品需求文档（PRD）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03 · 状态：待用户评审
 > 配套文档：[ROADMAP.md](ROADMAP.md) · [INNOVATION_IDEAS.md](../research/INNOVATION_IDEAS.md) · [TECH_FEASIBILITY.md](../research/TECH_FEASIBILITY.md)
@@ -7,7 +7,7 @@
 
 ## 1. 产品定位
 
-**TraceNest — AI File Asset Tracker**
+**FMap — AI File Asset Tracker**
 
 一个跨平台、隐私优先的 **AI 文件资产地图与追踪工具**。
 
@@ -20,7 +20,7 @@
 
 用户同时使用多个 AI 编码/助手工具（Codex、WorkBuddy、ZCode、豆包、Claude Code、Cursor、DSH 等），这些工具在 C、D、E 等多个磁盘上持续产生项目文件、下载、缓存、模型、依赖和临时文件。由此产生 8 类高频困惑：
 
-| # | 用户困惑 | TraceNest 的答案 |
+| # | 用户困惑 | FMap 的答案 |
 |---|---|---|
 | 1 | 不知道 AI 把项目生成到了哪里 | 项目资产页 + 扫描定位 |
 | 2 | 不知道 AI 下载了哪些东西 | 下载目录知识库 + 大文件哨兵 |

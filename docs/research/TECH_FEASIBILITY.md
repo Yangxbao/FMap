@@ -12,7 +12,7 @@
 
 - 普通目录遍历（`std::fs::read_dir` / `FindFirstFileEx`）对当前用户可读的目录完全可用，无需提权。[已验证-来源：Windows API 常规语义]
 - **免管理员的快速路径已被竞品源码证实**：diskplot 用 `GetFileInformationByHandleEx(FileFullDirectoryInfo)` 批量列目录（一次调用返回整个目录的条目+大小，`\\?\` 长路径打开），**无需管理员**，实测 214.9 万文件 10 秒。[已验证-来源：diskplot src/main/dirworker.ts 源码 + README]
-- **MFT 直读（WizTree/TreeSize/Everything 的极速方案）需要管理员权限**——官方文档明示 MFT 访问需提权。[已验证-来源：diskanalyzer.com、jam-software 文档、voidtools 文档（见 competitors-raw §②）] → TraceNest 定位（无管理员）**排除 MFT 路线**。
+- **MFT 直读（WizTree/TreeSize/Everything 的极速方案）需要管理员权限**——官方文档明示 MFT 访问需提权。[已验证-来源：diskanalyzer.com、jam-software 文档、voidtools 文档（见 competitors-raw §②）] → FMap 定位（无管理员）**排除 MFT 路线**。
 - 结论：采用"普通遍历起步 + `GetFileInformationByHandleEx` 批量枚举优化"双路径，见 SYSTEM_DESIGN §2.1。
 
 ## Q2 能否追踪未来创建的文件（实时监控）？
@@ -27,7 +27,7 @@
 
 **分两级，边界清晰：**
 
-| 操作 | 权限要求 | TraceNest 可用性 |
+| 操作 | 权限要求 | FMap 可用性 |
 |---|---|---|
 | `FSCTL_ENUM_USN_DATA`（全量枚举 MFT） | 需要管理员（需以 GENERIC_READ 打开 `\\.\C:` 卷句柄） | ❌ 排除（违反约束） |
 | `FSCTL_READ_USN_JOURNAL`（读取变更日志） | 同上，需管理员 | ❌ 排除 |
@@ -49,7 +49,7 @@
 
 ## Q5 能否判断文件属于哪个 AI Agent？
 
-**不能由 OS 直接判断，但可以通过"信号 + 规则"高置信推断。**这正是 TraceNest 的核心差异化（见 INNOVATION_IDEAS F1/F2/F3）：
+**不能由 OS 直接判断，但可以通过"信号 + 规则"高置信推断。**这正是 FMap 的核心差异化（见 INNOVATION_IDEAS F1/F2/F3）：
 
 - 各 AI 工具留下稳定痕迹：官方数据目录（`~/.claude`、`~/.codex`…[见 AI_TOOLS_DIRECTORIES](AI_TOOLS_DIRECTORIES.md)）+ 项目根信号文件（`CLAUDE.md`/`AGENTS.md`/`.cursorrules`/`GEMINI.md`）+ 会话目录名编码项目路径（Claude Code `~/.claude/projects/<编码路径>`，官方文档确认）。
 - 结论：`verified`（命中官方目录/信号文件）→ `likely`（目录模式）→ `inferred`（时间相关性）三级置信度体系在技术上完全可行。
@@ -87,7 +87,7 @@
 
 - reparse point 检测：`FILE_ATTRIBUTE_REPARSE_POINT` 属性位 + `FSCTL_GET_REPARSE_POINT` 判类型（junction/symlink）；目录遍历中即可获得，无需提权。[官方文档：learn.microsoft.com]
 - 硬链接：`GetFileInformationByHandle` 的 `nNumberOfLinks` / find data 字段。[官方文档]
-- duvis 证实 Windows 下的硬链接/真实占用处理是普遍短板（其 Windows 版回退 apparent size）——TraceNest 做好此项即超大部分开源对手。[已验证-来源：duvis README]
+- duvis 证实 Windows 下的硬链接/真实占用处理是普遍短板（其 Windows 版回退 apparent size）——FMap 做好此项即超大部分开源对手。[已验证-来源：duvis README]
 - pnpm store/junction 不跟随、记录目标的策略已定（SYSTEM_DESIGN）。[已验证-来源：diskplot README 明示 junction 不跟随策略]
 
 ## Q10 无管理员权限的能力边界总表

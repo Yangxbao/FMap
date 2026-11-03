@@ -1,6 +1,6 @@
 [package]
 name = "tracenest-desktop"
-description = "TraceNest 桌面应用（Tauri 2 壳 + IPC 命令层）"
+description = "FMap 桌面应用（Tauri 2 壳 + IPC 命令层）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

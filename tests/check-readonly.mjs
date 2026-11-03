@@ -7,7 +7,7 @@
  *   write / create（限于文件写创建）——白名单见下。
  *
  * 白名单原则（docs/architecture/SECURITY.md）：
- *   - 允许：数据库文件写（%APPDATA%/TraceNest 内部）、日志写
+ *   - 允许：数据库文件写（%APPDATA%/FMap 内部）、日志写
  *   - 禁止：一切面向用户文件系统的写/删/改
  *
  * 用法：node tests/check-readonly.mjs   （退出码 0 = 通过）

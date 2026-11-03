@@ -13,7 +13,7 @@
 ## 2. 当前代码结构
 
 ```
-TraceNest/
+FMap/
 ├── Cargo.toml                     # workspace：crates/* + apps/desktop/src-tauri
 ├── crates/
 │   ├── core/       # ScanStatus 七态、CoreError、format_bytes（纯逻辑，带测试）
@@ -48,7 +48,7 @@ winget install --id Microsoft.VisualStudio.2022.BuildTools -e
 # 2) 验证
 rustc --version && cargo --version
 
-# 3) 首次编译 + 全部 Rust 测试（在 TraceNest/ 下）
+# 3) 首次编译 + 全部 Rust 测试（在 FMap/ 下）
 cargo clippy --workspace -- -D warnings
 cargo test --workspace          # 13 个单测 + Windows 真机列卷测试
 cargo fmt --all

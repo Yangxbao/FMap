@@ -1,4 +1,4 @@
-# TraceNest 路线图（ROADMAP）
+# FMap 路线图（ROADMAP）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 功能编号 F1–F14 见 [INNOVATION_IDEAS.md](../research/INNOVATION_IDEAS.md)，验收标准见 [ACCEPTANCE_CRITERIA.md](../development/ACCEPTANCE_CRITERIA.md)
@@ -20,7 +20,7 @@
 
 ## V0.1 — 看见（MVP）
 
-**目标**：用户装上 TraceNest，选盘扫描，就能回答"AI 工具在我的电脑上留下了什么、占了多少"。
+**目标**：用户装上 FMap，选盘扫描，就能回答"AI 工具在我的电脑上留下了什么、占了多少"。
 
 **范围（in）**：
 - Rust 核心：目录扫描引擎（多线程、可中断、增量续传）、SQLite 索引（WAL）、AI 工具目录知识库 v1（F2）、信号文件检测（F1）、置信度评分（F3）。

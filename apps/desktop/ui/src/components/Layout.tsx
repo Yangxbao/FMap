@@ -29,10 +29,10 @@ export function Layout(props: {
       <aside className="flex w-56 shrink-0 flex-col border-r border-[#35373c] bg-[#1f2023]">
         <div className="flex items-center gap-2.5 px-4 pt-4 pb-3">
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[#4cc2ff] to-[#8a7bf0] text-sm font-bold text-white">
-            TN
+            FM
           </div>
           <div>
-            <b className="text-[15px] leading-tight">TraceNest</b>
+            <b className="text-[15px] leading-tight">FMap</b>
             <div className="text-[10px] leading-tight text-[#6b7075]">AI 文件资产地图</div>
           </div>
         </div>

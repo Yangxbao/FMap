@@ -1,6 +1,6 @@
 [package]
 name = "tracenest-platform"
-description = "TraceNest 平台抽象层（磁盘发现/元数据/能力检测；Windows 实现优先）"
+description = "FMap 平台抽象层（磁盘发现/元数据/能力检测；Windows 实现优先）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

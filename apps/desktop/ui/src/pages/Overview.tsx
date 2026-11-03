@@ -140,7 +140,7 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
           <div className={"mt-1.5 text-[22px] font-semibold " + (s && s.app.elevated === false ? "text-[#6ccb5f]" : s?.app.elevated === true ? "text-[#f26d6d]" : "")}>
             {s ? (s.app.elevated === false ? "普通用户" : s.app.elevated === true ? "已提权（拒绝运行）" : "未知") : "—"}
           </div>
-          <div className="text-[11px] text-[#6b7075]">TraceNest 设计上拒绝管理员运行</div>
+          <div className="text-[11px] text-[#6b7075]">FMap 设计上拒绝管理员运行</div>
         </Card>
         <Card>
           <div className="text-[12px] text-[#9aa0a6]">数据库</div>

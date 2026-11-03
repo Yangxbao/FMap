@@ -30,7 +30,7 @@ describe("ipc 封装", () => {
       __TAURI_INTERNALS__: {
         invoke: (cmd: string) => {
           if (cmd === "get_app_info") {
-            return Promise.resolve({ name: "TraceNest", version: "0.1.0", platform: "windows", elevated: false });
+            return Promise.resolve({ name: "FMap", version: "0.1.0", platform: "windows", elevated: false });
           }
           return Promise.reject(new Error("unknown command: " + cmd));
         },

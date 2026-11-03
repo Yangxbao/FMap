@@ -1,4 +1,4 @@
-//! # TraceNest 桌面应用（Tauri 2 壳）
+//! # FMap 桌面应用（Tauri 2 壳）
 //!
 //! 职责边界：本 crate 只做"壳"——窗口、IPC 命令路由、应用状态管理。
 //! 业务逻辑在 crates/core（类型）、crates/platform（平台能力）、
@@ -56,7 +56,7 @@ pub fn run() {
     match tracenest_platform::is_process_elevated() {
         Some(true) => {
             eprintln!(
-                "[TraceNest] 检测到管理员权限。TraceNest 设计上以普通用户权限运行，\
+                "[FMap] 检测到管理员权限。FMap 设计上以普通用户权限运行，\
                  拒绝启动。请用普通权限重新启动（这是产品的隐私与安全承诺，非故障）。"
             );
             std::process::exit(87); // 87 = 自定义退出码：拒绝提权运行
@@ -100,5 +100,5 @@ pub fn run() {
             commands::scan_cancel,
         ])
         .run(tauri::generate_context!())
-        .expect("TraceNest 桌面应用运行失败");
+        .expect("FMap 桌面应用运行失败");
 }

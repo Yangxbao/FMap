@@ -49,7 +49,7 @@
 
 ## 5. 第十三步自审（未授权操作检查）
 
-- 文件系统：仅创建于 TraceNest 工作区内（tests/fixture-tree、docs/、代码文件）；fixture 清理逻辑硬编码限定 fixture-tree 目录
+- 文件系统：仅创建于 FMap 工作区内（tests/fixture-tree、docs/、代码文件）；fixture 清理逻辑硬编码限定 fixture-tree 目录
 - 隐私：未读取任何会话/聊天/文件正文；扫描器为纯元数据遍历
 - 系统：无注册表/环境变量/Defender/服务变更；未安装任何软件
 - 网络：零出站

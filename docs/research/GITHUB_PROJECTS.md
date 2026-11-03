@@ -5,7 +5,7 @@
 
 ## A. 指定深挖项目（5）
 
-| # | 项目 | Stars | 许可证 | 技术栈 | 最新版本 | 活跃度 | 一句话 | 与 TraceNest 关系 |
+| # | 项目 | Stars | 许可证 | 技术栈 | 最新版本 | 活跃度 | 一句话 | 与 FMap 关系 |
 |---|---|---|---|---|---|---|---|---|
 | 1 | [yamadashy/duvis](https://github.com/yamadashy/duvis) | 6 | MIT | Rust + React/d3 | v0.1.8 (2026-05) | 中（push 2026-10-31） | AI+人类两用的分类磁盘可视化（JSON/NDJSON/TOON） | 语义子集；分类词汇表+explain 范式可直接借鉴 |
 | 2 | [adileo/squirreldisk](https://github.com/adileo/squirreldisk) | 2,124 | **AGPL-3.0** | Rust (egui) | v2.6.1 (2026-10-18) | 活跃 | 消费级 sunburst 找大文件 + SSH/云 | watch 平台策略与 agent 协议可借鉴；⚠️ 许可证隔离 |
@@ -17,7 +17,7 @@
 
 | 项目 | 链接 | 机制要点 | 相关度 |
 |---|---|---|---|
-| WizTree | [diskanalyzer.com](https://diskanalyzer.com) | MFT 直读（**需管理员**）；个人免费/商用付费 | 高（反衬 TraceNest 免管理员卖点） |
+| WizTree | [diskanalyzer.com](https://diskanalyzer.com) | MFT 直读（**需管理员**）；个人免费/商用付费 | 高（反衬 FMap 免管理员卖点） |
 | TreeSize Free | [jam-software.com](https://www.jam-software.com/treesize/) | MFT（需管理员）+ 回退遍历 | 中 |
 | SpaceSniffer | [uderzo.it](https://www.uderzo.it/main_products/space_sniffer) | 普通遍历、免管理员 treemap | 中 |
 | Everything | [voidtools.com](https://www.voidtools.com/) | MFT 索引 + USN Journal 实时（需管理员） | 高（"MFT+USN"技术对照） |
@@ -35,7 +35,7 @@
 | 项目 | Stars | 许可证 | 说明 | 相关度 |
 |---|---|---|---|---|
 | [ccusage/ccusage](https://github.com/ccusage/ccusage) | **19,300** | Other/NOASSERTION【待验证】 | 解析 `~/.claude/projects` JSONL 按 session/项目统计 token 成本 | **高**：证明会话↔项目反推路线可行且需求巨大 |
-| [garrickz2/claude-code-cleaner](https://github.com/garrickz2/claude-code-cleaner) | 49 | MIT | TUI 清理 `~/.claude` 磁盘垃圾 | 高：同问题域，破坏性 vs TraceNest 只读 |
+| [garrickz2/claude-code-cleaner](https://github.com/garrickz2/claude-code-cleaner) | 49 | MIT | TUI 清理 `~/.claude` 磁盘垃圾 | 高：同问题域，破坏性 vs FMap 只读 |
 | [thomas-pedersen/cursor-chat-browser](https://github.com/thomas-pedersen/cursor-chat-browser) | 516 | — | 浏览 Cursor `state.vscdb`（SQLite）聊天 | 高：AI 本地格式逆向需求真实（50–100GB 膨胀案例） |
 | [anthropics/claude-code #11646](https://github.com/anthropics/claude-code/issues/11646) | issue | — | 官方仓库内建 `claude clean` 请求（3GB+ 日志） | 高：需求侧最硬证据 |
 | [IamRamgarhia/AICacheCleaner](https://github.com/IamRamgarhia/AICacheCleaner) | — | — | 多 AI 工具意识清理器【待验证】 | 中-高 |

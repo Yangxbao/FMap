@@ -1,4 +1,4 @@
-# TraceNest 验收标准（ACCEPTANCE_CRITERIA）
+# FMap 验收标准（ACCEPTANCE_CRITERIA）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 口径：每条标准必须**可观察、可复现**；标注 [自动] 的进 CI，[手动] 的为发布前人工检查单。

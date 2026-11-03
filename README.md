@@ -1,8 +1,8 @@
-# TraceNest — AI File Asset Tracker
+# FMap — AI File Asset Tracker
 
 > 让 AI 在电脑上留下的每一个文件，都有迹可循。
 
-TraceNest 是一款**跨平台、隐私优先、完全本地运行**的 AI 文件资产追踪工具（Windows 首发）。
+FMap 是一款**跨平台、隐私优先、完全本地运行**的 AI 文件资产追踪工具（Windows 首发）。
 它帮助使用 Claude Code、Codex、Cursor、Gemini CLI、ZCode、豆包、DSH 等 AI 工具的用户回答：
 
 - AI 把项目/下载/缓存/模型放到了哪里？

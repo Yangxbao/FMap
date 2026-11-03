@@ -1,4 +1,4 @@
-# TraceNest 开发计划（DEVELOPMENT_PLAN）
+# FMap 开发计划（DEVELOPMENT_PLAN）
 
 > 版本：v0.9（夜间研究稿） · 日期：2026-11-03
 > 前置：开工前需用户确认 NEXT_STEPS_FOR_HUMAN.md 中的 4 项决策
