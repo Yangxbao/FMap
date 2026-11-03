@@ -11,18 +11,36 @@
 
 mod commands;
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::{Arc, Mutex};
 use tracenest_database::Database;
+
+/// 单个扫描任务的运行句柄（后台线程持有，命令层读写）。
+pub struct ScanJob {
+    pub cancel: Arc<AtomicBool>,
+    pub progress: Arc<Mutex<commands::ScanProgress>>,
+}
 
 /// 应用全局状态：数据库句柄懒初始化（失败不崩溃，通过 IPC 暴露错误）。
 pub struct AppState {
     pub db: Mutex<Option<Database>>,
     pub db_error: Mutex<Option<String>>,
+    pub db_path: Mutex<Option<PathBuf>>,
+    pub scans: Mutex<HashMap<i64, ScanJob>>,
+    pub next_scan_id: AtomicI64,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        Self { db: Mutex::new(None), db_error: Mutex::new(None) }
+        Self {
+            db: Mutex::new(None),
+            db_error: Mutex::new(None),
+            db_path: Mutex::new(None),
+            scans: Mutex::new(HashMap::new()),
+            next_scan_id: AtomicI64::new(1),
+        }
     }
 }
 
@@ -46,15 +64,19 @@ pub fn run() {
             // 初始化数据库：位置 = 系统应用数据目录（Windows: %APPDATA%）
             let state = app.state::<AppState>();
             match app.path().app_data_dir() {
-                Ok(dir) => match Database::open(&dir.join("tracenest.db")) {
-                    Ok(db) => {
-                        *state.db.lock().unwrap() = Some(db);
+                Ok(dir) => {
+                    let db_path = dir.join("tracenest.db");
+                    match Database::open(&db_path) {
+                        Ok(db) => {
+                            *state.db_path.lock().unwrap() = Some(db_path);
+                            *state.db.lock().unwrap() = Some(db);
+                        }
+                        Err(e) => {
+                            // 不崩溃：把错误暴露给 UI（M0-1 要求"基本错误提示"）
+                            *state.db_error.lock().unwrap() = Some(e.to_string());
+                        }
                     }
-                    Err(e) => {
-                        // 不崩溃：把错误暴露给 UI（M0-1 要求"基本错误提示"）
-                        *state.db_error.lock().unwrap() = Some(e.to_string());
-                    }
-                },
+                }
                 Err(e) => {
                     *state.db_error.lock().unwrap() = Some(format!("无法定位应用数据目录: {e}"));
                 }
@@ -66,6 +88,9 @@ pub fn run() {
             commands::list_volumes,
             commands::get_db_stats,
             commands::get_app_info,
+            commands::scan_start,
+            commands::scan_status,
+            commands::scan_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("TraceNest 桌面应用运行失败");

@@ -4,6 +4,8 @@
 //! 桌面应用引用。**本 crate 禁止出现任何删除/移动/重命名文件的 API**——
 //! 只读承诺见 docs/architecture/SECURITY.md，CI 侧有 grep 门禁兜底。
 
+pub mod scanner;
+
 use serde::{Deserialize, Serialize};
 
 /// 应用基本信息（前端"关于"与状态栏展示用）。

@@ -1,8 +1,88 @@
-/** 首页总览：真实系统状态 + 磁盘列表 + 明确标记的未实现区块。 */
-import { useEffect, useState } from "react";
+/** 首页总览：真实系统状态 + 磁盘列表 + 真实扫描控制（M1） + 明确标记的未实现区块。 */
+import { useEffect, useRef, useState } from "react";
 import { Card, DevPlaceholder } from "../components/EmptyState";
-import { api, IpcError, type DbStats, type SystemStatus, type VolumeInfo } from "../lib/ipc";
+import { api, IpcError, type DbStats, type ScanProgress, type SystemStatus, type VolumeInfo } from "../lib/ipc";
 import { formatBytes } from "../lib/format";
+
+const SCAN_STATUS_LABEL: Record<string, string> = {
+  pending: "等待扫描", running: "扫描中", done: "已完成", cancelled: "已取消",
+  access_denied: "权限不足", volume_offline: "磁盘离线", failed: "扫描失败",
+};
+const TERMINAL = new Set(["done", "cancelled", "access_denied", "volume_offline", "failed"]);
+
+function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [scan, setScan] = useState<ScanProgress | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const running = scan !== null && !TERMINAL.has(scan.status);
+
+  // 轮询进度（运行中每 1.5s；结束后停止）
+  useEffect(() => {
+    if (!scan || TERMINAL.has(scan.status)) return;
+    pollRef.current = window.setInterval(() => {
+      api.scanStatus(scan.scan_id).then((p) => {
+        setScan(p);
+        if (TERMINAL.has(p.status) && pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+        }
+      }).catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
+    }, 1500);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [scan?.scan_id, scan?.status]);
+
+  if (!props.connected) {
+    return <DevPlaceholder feature="磁盘扫描" milestone="M1（后端已实现）" note="通过 Tauri 启动后，可在此对已发现的磁盘执行真实只读扫描，进度来自后台线程。" />;
+  }
+  const toggle = (root: string) => {
+    setSelected((s) => { const n = new Set(s); n.has(root) ? n.delete(root) : n.add(root); return n; });
+  };
+  const start = async () => {
+    setErr(null);
+    try {
+      const roots = selected.size ? [...selected] : (props.volumes ?? []).map((v) => v.root);
+      setScan(await api.scanStart(roots));
+    } catch (e) { setErr(e instanceof IpcError ? e.message : String(e)); }
+  };
+  const cancel = async () => { if (scan) await api.scanCancel(scan.scan_id).catch(() => {}); };
+
+  return (
+    <Card title="磁盘扫描（M1 · 真实只读扫描）">
+      <div className="mb-2.5 flex flex-wrap gap-2">
+        {(props.volumes ?? []).map((v) => (
+          <label key={v.root} className="flex cursor-pointer items-center gap-1.5 rounded border border-[#35373c] px-2 py-1 text-[12px]">
+            <input type="checkbox" checked={selected.has(v.root)} onChange={() => toggle(v.root)} />
+            <b>{v.root}</b><span className="text-[#6b7075]">{v.fs_type ?? ""}</span>
+          </label>
+        ))}
+        {props.volumes?.length === 0 && <span className="text-[12px] text-[#6b7075]">未发现磁盘</span>}
+      </div>
+      <div className="flex items-center gap-2.5">
+        <button className="rounded bg-[#4cc2ff] px-3.5 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-40"
+          disabled={running} onClick={start}>{running ? "扫描中…" : "开始扫描"}</button>
+        {running && <button className="rounded border border-[#f26d6d] px-3 py-1.5 text-[12.5px] text-[#f26d6d]" onClick={cancel}>取消</button>}
+      </div>
+      {err && <div className="mt-2 text-[12px] text-[#f26d6d]">{err}</div>}
+      {scan && (
+        <div className="mt-3 space-y-1 text-[12.5px]">
+          <div>状态：<b className={scan.status === "done" ? "text-[#6ccb5f]" : scan.status === "failed" ? "text-[#f26d6d]" : ""}>
+            {SCAN_STATUS_LABEL[scan.status] ?? scan.status}</b>
+            {scan.status === "done" && scan.denied === 0 ? "（全部成功）" : ""}
+            {scan.denied > 0 && TERMINAL.has(scan.status) ? "（部分完成：存在无权访问目录）" : ""}
+          </div>
+          <div className="text-[#9aa0a6]">文件 {scan.files} · 目录 {scan.dirs} · 无权/跳过 {scan.denied}</div>
+          {running && scan.current_dir && <div className="truncate font-mono text-[11px] text-[#6b7075]">{scan.current_dir}</div>}
+          {scan.error && <div className="text-[12px] text-[#f26d6d]">{scan.error}</div>}
+        </div>
+      )}
+      <div className="mt-2.5 text-[11px] text-[#6b7075]">
+        只读扫描：不删除、不修改任何文件；排除 $RECYCLE.BIN / System Volume Information；权限不足逐目录跳过并计数。
+      </div>
+    </Card>
+  );
+}
 
 function Row(props: { k: string; v: React.ReactNode; ok?: boolean }) {
   return (
@@ -108,6 +188,9 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
           ))}
         </div>
       )}
+
+      <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">磁盘扫描</h2>
+      <ScanCard connected={connected} volumes={volumes} />
 
       <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">扫描记录</h2>
       {!connected ? (

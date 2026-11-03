@@ -88,10 +88,24 @@ export interface DbStats {
   paths_total: number;
 }
 
+export interface ScanProgress {
+  scan_id: number;
+  /** pending|running|done|cancelled|access_denied|volume_offline|failed */
+  status: string;
+  files: number;
+  dirs: number;
+  denied: number;
+  current_dir: string;
+  error: string | null;
+}
+
 /** 后端命令的唯一访问点（新增命令在此补充）。 */
 export const api = {
   getAppInfo: () => invoke<AppInfo>("get_app_info"),
   getSystemStatus: () => invoke<SystemStatus>("get_system_status"),
   listVolumes: () => invoke<VolumeInfo[]>("list_volumes"),
   getDbStats: () => invoke<DbStats>("get_db_stats"),
+  scanStart: (roots: string[]) => invoke<ScanProgress>("scan_start", { roots }),
+  scanStatus: (scanId: number) => invoke<ScanProgress>("scan_status", { scanId }),
+  scanCancel: (scanId: number) => invoke<boolean>("scan_cancel", { scanId }),
 };

@@ -152,6 +152,98 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// 插入单个路径节点（扫描线程按 DFS 先序调用：父先于子），返回新节点 id。
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_path(
+        &self,
+        scan_id: i64,
+        volume_id: i64,
+        parent_id: Option<i64>,
+        name: &str,
+        depth: i64,
+        is_dir: bool,
+        size: u64,
+        mtime: Option<i64>,
+        attrs: u32,
+    ) -> Result<i64, CoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,mtime,attrs,scan_id)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                rusqlite::params![
+                    volume_id,
+                    parent_id,
+                    name,
+                    depth,
+                    is_dir as i64,
+                    size as i64,
+                    mtime,
+                    attrs as i64,
+                    scan_id
+                ],
+            )
+            .map_err(|e| CoreError::Database(format!("插入路径失败: {e}")))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    /// 取最新一条 running 扫描代的 DB id（M1 单任务简化模型）。
+    pub fn query_latest_running_scan(&self) -> Result<i64, CoreError> {
+        self.conn
+            .query_row(
+                "SELECT id FROM scans WHERE status='running' ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| CoreError::Database(format!("查询运行中扫描失败: {e}")))
+    }
+
+    /// 确保卷已登记并返回其 id（不存在则插入最小记录）。
+    pub fn ensure_volume(&self, root: &str) -> Result<i64, CoreError> {
+        use rusqlite::OptionalExtension;
+        let existing: Option<i64> = self
+            .conn
+            .query_row("SELECT id FROM volumes WHERE root=?1", [root], |r| r.get(0))
+            .optional()
+            .map_err(|e| CoreError::Database(format!("查询卷失败: {e}")))?;
+        if let Some(id) = existing {
+            return Ok(id);
+        }
+        self.upsert_volume(root, None, None, None, None, false)
+    }
+
+    /// 扫描完成后：目录 size = 子树聚合（自底向上单趟，按深度降序）。
+    pub fn aggregate_dir_sizes(&self, scan_id: i64) -> Result<(), CoreError> {
+        let rows: Vec<(i64, Option<i64>, i64)> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id, parent_id, size FROM paths
+                     WHERE scan_id = ?1 AND deleted_at IS NULL
+                     ORDER BY depth DESC",
+                )
+                .map_err(|e| CoreError::Database(format!("聚合查询失败: {e}")))?;
+            let iter = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .map_err(|e| CoreError::Database(format!("聚合映射失败: {e}")))?;
+            iter.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| CoreError::Database(format!("聚合读取失败: {e}")))?
+        };
+        // child id -> 累计增量；自底向上累加到父节点
+        let mut delta: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
+        for (id, parent, size) in rows {
+            let total = size + delta.remove(&id).unwrap_or(0);
+            if total > 0 {
+                self.conn
+                    .execute("UPDATE paths SET size=?1 WHERE id=?2", rusqlite::params![total, id])
+                    .map_err(|e| CoreError::Database(format!("聚合回写失败: {e}")))?;
+            }
+            if let Some(p) = parent {
+                *delta.entry(p).or_insert(0) += total;
+            }
+        }
+        Ok(())
+    }
+
     /// 结束扫描任务（status 遵循七态模型）。
     pub fn finish_scan(
         &self,
