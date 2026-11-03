@@ -22,13 +22,22 @@ pub struct CommandError {
 
 impl CommandError {
     fn backend(msg: impl Into<String>) -> Self {
-        Self { kind: "backend".into(), message: msg.into() }
+        Self {
+            kind: "backend".into(),
+            message: msg.into(),
+        }
     }
     fn database(msg: impl Into<String>) -> Self {
-        Self { kind: "database".into(), message: msg.into() }
+        Self {
+            kind: "database".into(),
+            message: msg.into(),
+        }
     }
     fn platform(msg: impl Into<String>) -> Self {
-        Self { kind: "platform".into(), message: msg.into() }
+        Self {
+            kind: "platform".into(),
+            message: msg.into(),
+        }
     }
 }
 
@@ -122,12 +131,12 @@ pub fn get_db_stats(state: State<'_, AppState>) -> CmdResult<tracenest_database:
 
 // ==================== M1：扫描引擎命令 ====================
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use tracenest_core::scanner::{self, ScanEndReason, ScanOptions, WalkBatch};
+use tracenest_core::scanner::ScanEndReason;
+use tracenest_database::scan_writer::{run_scan_to_db, ScanWriteProgress, DEFAULT_BATCH_SIZE};
 
 /// 前端可见的扫描进度（scan_status 的返回体）。
 #[derive(Debug, Clone, Serialize, Default)]
@@ -144,10 +153,7 @@ pub struct ScanProgress {
 }
 
 #[tauri::command]
-pub fn scan_start(
-    state: State<'_, AppState>,
-    roots: Vec<String>,
-) -> CmdResult<ScanProgress> {
+pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<ScanProgress> {
     if roots.is_empty() {
         return Err(CommandError::backend("扫描根列表为空"));
     }
@@ -159,21 +165,22 @@ pub fn scan_start(
         .clone()
         .ok_or_else(|| CommandError::database("数据库未就绪，无法启动扫描"))?;
 
-    let scan_id = state
-        .next_scan_id
-        .fetch_add(1, Ordering::Relaxed);
+    let scan_id = state.next_scan_id.fetch_add(1, Ordering::Relaxed);
 
-    // 为本次扫描登记扫描代与卷（主连接）
-    {
+    // 为本次扫描登记扫描代（携带实例标识）与卷（主连接）；显式取回 db_scan_id
+    let (db_scan_id, volume_id) = {
         let guard = state.db.lock().unwrap();
         let db = guard
             .as_ref()
             .ok_or_else(|| CommandError::database("数据库未就绪"))?;
-        let scan_db_id = db.begin_scan(&roots, tracenest_core::APP_VERSION)?;
-        let volumes = tracenest_platform::create_provider().list_volumes().unwrap_or_default();
+        let scan_db_id = db.begin_scan(&roots, tracenest_core::APP_VERSION, db.instance_id())?;
+        let volumes = tracenest_platform::create_provider()
+            .list_volumes()
+            .unwrap_or_default();
+        let mut volume_id: Option<i64> = None;
         for root in &roots {
             let v = volumes.iter().find(|v| v.root.eq_ignore_ascii_case(root));
-            db.upsert_volume(
+            let id = db.upsert_volume(
                 root,
                 v.and_then(|v| v.label.as_deref()),
                 v.and_then(|v| v.total_bytes),
@@ -181,79 +188,47 @@ pub fn scan_start(
                 v.and_then(|v| v.fs_type.as_deref()),
                 v.map(|v| v.is_removable).unwrap_or(false),
             )?;
+            if root.eq_ignore_ascii_case(&roots[0]) {
+                volume_id = Some(id);
+            }
         }
-        // scan_id 对外暴露的是应用级自增号；DB 内部 scans.id 另记（M1 简化：单任务场景一致）
-        let _ = scan_db_id;
-    }
+        (
+            scan_db_id,
+            volume_id.ok_or_else(|| CommandError::database("无法登记扫描根卷"))?,
+        )
+    };
 
     let cancel = Arc::new(AtomicBool::new(false));
-    let progress = Arc::new(Mutex::new(ScanProgress { scan_id, status: "running".into(), ..Default::default() }));
+    let progress = Arc::new(Mutex::new(ScanProgress {
+        scan_id,
+        status: "running".into(),
+        ..Default::default()
+    }));
 
-    // 后台线程：独立写连接（WAL 支持与主连接并发读）
+    // 后台线程：独立写连接（WAL 支持与主连接并发读）；编排逻辑在 scan_writer（可测试）
     let cancel_t = cancel.clone();
     let progress_t = progress.clone();
     let roots_t = roots.clone();
     thread::spawn(move || {
         let run = || -> Result<ScanEndReason, String> {
-            let db = tracenest_database::Database::open(&db_path)
-                .map_err(|e| e.to_string())?;
-            // 找到刚创建的 running 扫描代（最新一条）
-            let scan_db_id: i64 = db
-                .query_latest_running_scan()
-                .map_err(|e| e.to_string())?;
-            let volume_id: i64 = db
-                .ensure_volume(&roots_t[0])
-                .map_err(|e| e.to_string())?;
-            // 根节点
-            let root_name = roots_t[0].trim_end_matches(['\\', '/']).to_string();
-            let root_id = db
-                .insert_path(scan_db_id, volume_id, None, &root_name, 0, true, 0, None, 0)
-                .map_err(|e| e.to_string())?;
-            let mut rel_ids: HashMap<String, i64> = HashMap::new();
-            rel_ids.insert(String::new(), root_id);
-
-            let opts = ScanOptions::default();
-            let mut last_flush_files = 0u64;
-            let summary = scanner::scan_root(
+            let db = tracenest_database::Database::open(&db_path).map_err(|e| e.to_string())?;
+            let opts = tracenest_core::scanner::ScanOptions::default();
+            let progress_cb = |p: ScanWriteProgress| {
+                let mut g = progress_t.lock().unwrap();
+                g.files = p.files;
+                g.dirs = p.dirs;
+                g.denied = p.denied;
+                g.current_dir = p.current_dir;
+            };
+            let summary = run_scan_to_db(
+                &db,
+                db_scan_id,
+                volume_id,
                 Path::new(&roots_t[0]),
                 &opts,
                 Some(&cancel_t),
-                2000,
-                |batch: WalkBatch| {
-                    for e in &batch.entries {
-                        let (parent_rel, name) = match e.rel_path.rsplit_once('/') {
-                            Some((p, n)) => (p.to_string(), n.to_string()),
-                            None => (String::new(), e.name.clone()),
-                        };
-                        let parent_id = rel_ids.get(&parent_rel).copied();
-                        let depth = e.depth as i64 + 1;
-                        if let Ok(id) = db.insert_path(
-                            scan_db_id, volume_id, parent_id, &name, depth,
-                            e.is_dir, e.size, e.mtime, e.attrs,
-                        ) {
-                            if e.is_dir {
-                                rel_ids.insert(e.rel_path.clone(), id);
-                            }
-                        }
-                    }
-                    last_flush_files += batch.files_in_batch;
-                    let mut p = progress_t.lock().unwrap();
-                    p.files = last_flush_files + batch.entries.iter().filter(|e| !e.is_dir).count() as u64;
-                    p.dirs += batch.dirs_in_batch;
-                    p.denied += batch.denied_in_batch;
-                    if let Some(last) = batch.entries.last() {
-                        p.current_dir = last.rel_path.clone();
-                    }
-                },
-            );
-            // 聚合 + 收尾（同一写连接）
-            db.aggregate_dir_sizes(scan_db_id).map_err(|e| e.to_string())?;
-            db.finish_scan(
-                scan_db_id,
-                summary.end_reason.as_status(),
-                summary.files_scanned,
-                summary.dirs_scanned,
-                summary.denied_count,
+                DEFAULT_BATCH_SIZE,
+                progress_cb,
             )
             .map_err(|e| e.to_string())?;
             Ok(summary.end_reason)
@@ -271,7 +246,14 @@ pub fn scan_start(
         }
     });
 
-    state.scans.lock().unwrap().insert(scan_id, ScanJob { cancel, progress: progress.clone() });
+    state.scans.lock().unwrap().insert(
+        scan_id,
+        ScanJob {
+            cancel,
+            progress: progress.clone(),
+            db_scan_id,
+        },
+    );
     let p = progress.lock().unwrap().clone(); // 同 scan_status：避免临时守卫跨过局部变量 Drop
     Ok(p)
 }

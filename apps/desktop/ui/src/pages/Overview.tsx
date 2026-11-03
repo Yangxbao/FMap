@@ -157,7 +157,8 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
             {s && (
               <>
                 <div>{s.capabilities.can_list_volumes ? "✅" : "⛔"} 磁盘发现</div>
-                <div>{s.capabilities.can_scan_metadata ? "✅" : "⏳"} 文件扫描（M1）</div>
+                <div>{s.capabilities.can_scan_metadata ? "✅" : "⏳"} 文件扫描（已实现）</div>
+                <div>{s.capabilities.can_read_file_contents ? "✅" : "⛔"} 读取文件正文（永久关闭）</div>
                 <div>{s.capabilities.can_watch ? "✅" : "⏳"} 实时监控（M5）</div>
               </>
             )}

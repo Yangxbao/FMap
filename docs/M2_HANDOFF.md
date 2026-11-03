@@ -1,5 +1,7 @@
 # M2 开发交接文档（M2_HANDOFF）
 
+> 2026-11-04 更新：M1 四项遗留已修复并真机验收（见 M1_REMAINING_ISSUES_REPORT.md）。数据库现为 schema v2（scans.instance_id/end_note）；扫描编排已收拢至 scan_writer::run_scan_to_db（批量事务 5000/批，实测 110,206 行/秒）；新测试 28/28。下方原始内容中"未编译"等表述已过时。
+
 > 日期：2026-11-03 · 前置：M1 代码完成（编译验证待工具链）
 
 ## 1. 当前状态
@@ -44,7 +46,13 @@ scan_start(roots) / scan_status(scan_id) / scan_cancel(scan_id)
 | 扫描线程写库与 UI 查询并发 | WAL 已开；批事务 2000 行已限；真机验证 |
 | 大目录树的 HashMap 内存 | rel_path→id 映射随节点数增长；百万级需评估（基准后处理） |
 
-## 6. 需要用户人工处理
+## 6. M2 新增建议（来自 M1 收尾）
+
+1. 双实例并发扫描的进程存活检测（当前单实例假设）
+2. 扫描统计卡自动刷新；应用正常关闭时主动取消在跑任务
+3. NSIS 打包验证 FMap 产物名
+
+## 7. 需要用户人工处理
 
 1. 安装 Rust + MSVC（唯一阻塞；命令见 M1_HANDOFF §5）
 2. 可选：GitHub 远程仓库创建与首次推送授权

@@ -53,6 +53,7 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
 export interface PlatformCapabilities {
   can_list_volumes: boolean;
   can_scan_metadata: boolean;
+  can_read_file_contents: boolean;
   can_watch: boolean;
 }
 

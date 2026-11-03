@@ -2,12 +2,15 @@
 //!
 //! 职责：
 //! - 数据库文件初始化与连接管理（WAL 模式，支持"扫描批量写 + UI 只读"并发）
-//! - 版本化迁移（meta 表中记录 schema_version）
-//! - M0 阶段的基础读写：卷登记、扫描任务登记、统计查询
+//! - 版本化迁移（meta 表中记录 schema_version；v2 增加 instance_id/end_note）
+//! - 扫描代生命周期：登记 → 批量事务写入（scan_writer）→ 聚合 → 终态
+//! - 异常退出恢复（recover_orphaned_scans）
 //!
 //! 隐私约束（docs/architecture/SECURITY.md）：
 //! - 只存元数据（路径/大小/时间/归属），**绝不存文件内容**
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
+
+pub mod scan_writer;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,15 +19,19 @@ use rusqlite::Connection;
 use tracenest_core::CoreError;
 
 /// 内嵌的权威 Schema（与 tests/schema.sql 同源，避免两处维护）。
+/// 注意：SCHEMA_SQL 为 v1 基线；v2 的增量列由 migrate() 以 ALTER 应用，
+/// 保证 v1 旧库与全新库收敛到同一结构。
 pub const SCHEMA_SQL: &str = include_str!("../../../tests/schema.sql");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
     conn: Connection,
     path: PathBuf,
+    /// 本实例标识（进程级随机，用于异常退出恢复时的任务归属判定）
+    instance_id: String,
 }
 
 fn now_ms() -> i64 {
@@ -34,11 +41,22 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 生成实例标识：纳秒时间戳 + 进程号（无需外部 uuid 依赖，碰撞概率可忽略）。
+fn generate_instance_id() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{:x}-{:x}", nanos, std::process::id())
+}
+
 impl Database {
     /// 打开（或创建）数据库并确保 schema 就绪。
     ///
     /// - parent 目录不存在时自动创建（应用数据目录由调用方决定）
     /// - `:memory:` 用于测试
+    /// - 本方法不做孤儿任务恢复：那是显式的 [`Database::recover_orphaned_scans`]，
+    ///   便于测试与调用方控制时机
     pub fn open(path: &Path) -> Result<Self, CoreError> {
         if path != Path::new(":memory:") {
             if let Some(parent) = path.parent() {
@@ -53,10 +71,21 @@ impl Database {
         let _ = conn.pragma_update(None, "journal_mode", "WAL");
         conn.pragma_update(None, "foreign_keys", "ON")
             .map_err(|e| CoreError::Database(format!("启用外键失败: {e}")))?;
+        // 并发写锁等待：主连接与扫描工作线程写连接并发时，等待而非立即 SQLITE_BUSY
+        let _ = conn.busy_timeout(std::time::Duration::from_millis(30_000));
 
-        let mut db = Self { conn, path: path.to_path_buf() };
+        let mut db = Self {
+            conn,
+            path: path.to_path_buf(),
+            instance_id: generate_instance_id(),
+        };
         db.migrate()?;
         Ok(db)
+    }
+
+    /// 本实例标识（scan_start 登记任务时写入，用于恢复判定）。
+    pub fn instance_id(&self) -> &str {
+        &self.instance_id
     }
 
     /// 版本化迁移：空库 → 依次应用各版本 DDL。
@@ -84,7 +113,26 @@ impl Database {
                 )
                 .map_err(|e| CoreError::Database(format!("写入 schema_version 失败: {e}")))?;
         }
-        // 未来版本在此追加 if current < 2 { ... }
+
+        // v1 → v2：scans 增加 instance_id（异常退出恢复的任务归属）与 end_note（终态说明）。
+        // ALTER ADD COLUMN 为非破坏操作，既有行以 NULL 填充，历史数据不动。
+        if current < 2 {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE scans ADD COLUMN instance_id TEXT;
+                     ALTER TABLE scans ADD COLUMN end_note TEXT;",
+                )
+                .map_err(|e| CoreError::Database(format!("应用 schema v2 失败: {e}")))?;
+            self.conn
+                .execute(
+                    "INSERT INTO meta(key,value) VALUES('schema_version','2')
+                     ON CONFLICT(key) DO UPDATE SET value='2'",
+                    [],
+                )
+                .map_err(|e| CoreError::Database(format!("写入 schema_version=2 失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 3 { ... }
 
         let actual: i64 = self
             .conn
@@ -100,6 +148,40 @@ impl Database {
             )));
         }
         Ok(())
+    }
+
+    /// 异常退出恢复：把**不属于本实例**的 running 扫描标记为 failed 并写明原因。
+    ///
+    /// - 已入库的 paths 记录全部保留（只改 scans 终态，不删任何数据）
+    /// - 返回被恢复的扫描代 id 列表（供调用方记录/展示）
+    /// - 边界：M1 假设单实例扫描；若双实例并发，后启动实例会回收先实例的任务
+    ///   （见 docs/M1_REMAINING_ISSUES_DESIGN.md D2）
+    pub fn recover_orphaned_scans(&self) -> Result<Vec<i64>, CoreError> {
+        let recovered: Vec<i64> = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT id FROM scans
+                     WHERE status='running' AND (instance_id IS NULL OR instance_id <> ?1)",
+                )
+                .map_err(|e| CoreError::Database(format!("孤儿扫描查询失败: {e}")))?;
+            let iter = stmt
+                .query_map([self.instance_id.as_str()], |r| r.get(0))
+                .map_err(|e| CoreError::Database(format!("孤儿扫描映射失败: {e}")))?;
+            iter.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| CoreError::Database(format!("孤儿扫描读取失败: {e}")))?
+        };
+        for id in &recovered {
+            self.finish_scan(
+                *id,
+                "failed",
+                0,
+                0,
+                0,
+                Some("应用在扫描期间退出（启动时恢复，已完成部分已保留）"),
+            )?;
+        }
+        Ok(recovered)
     }
 
     pub fn path(&self) -> &Path {
@@ -140,13 +222,23 @@ impl Database {
         Ok(self.conn.last_insert_rowid())
     }
 
-    /// 创建一条扫描任务记录，返回扫描代 id。
-    pub fn begin_scan(&self, roots: &[String], app_version: &str) -> Result<i64, CoreError> {
+    /// 创建一条扫描任务记录（登记本实例标识），返回扫描代 id。
+    pub fn begin_scan(
+        &self,
+        roots: &[String],
+        app_version: &str,
+        instance_id: &str,
+    ) -> Result<i64, CoreError> {
         self.conn
             .execute(
-                "INSERT INTO scans(started_at,status,roots,app_version)
-                 VALUES(?1,'running',?2,?3)",
-                rusqlite::params![now_ms(), serde_json::to_string(roots).unwrap_or_default(), app_version],
+                "INSERT INTO scans(started_at,status,roots,app_version,instance_id)
+                 VALUES(?1,'running',?2,?3,?4)",
+                rusqlite::params![
+                    now_ms(),
+                    serde_json::to_string(roots).unwrap_or_default(),
+                    app_version,
+                    instance_id
+                ],
             )
             .map_err(|e| CoreError::Database(format!("创建扫描记录失败: {e}")))?;
         Ok(self.conn.last_insert_rowid())
@@ -166,27 +258,85 @@ impl Database {
         mtime: Option<i64>,
         attrs: u32,
     ) -> Result<i64, CoreError> {
-        self.conn
-            .execute(
-                "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,mtime,attrs,scan_id)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                rusqlite::params![
-                    volume_id,
-                    parent_id,
-                    name,
-                    depth,
-                    is_dir as i64,
-                    size as i64,
-                    mtime,
-                    attrs as i64,
-                    scan_id
-                ],
-            )
-            .map_err(|e| CoreError::Database(format!("插入路径失败: {e}")))?;
-        Ok(self.conn.last_insert_rowid())
+        Self::insert_path_on(
+            &self.conn, scan_id, volume_id, parent_id, name, depth, is_dir, size, mtime, attrs,
+        )
     }
 
-    /// 取最新一条 running 扫描代的 DB id（M1 单任务简化模型）。
+    /// 事务内插入（供 scan_writer 批量事务使用；conn 可为 Transaction 的 Deref）。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_path_on(
+        conn: &Connection,
+        scan_id: i64,
+        volume_id: i64,
+        parent_id: Option<i64>,
+        name: &str,
+        depth: i64,
+        is_dir: bool,
+        size: u64,
+        mtime: Option<i64>,
+        attrs: u32,
+    ) -> Result<i64, CoreError> {
+        conn.execute(
+            "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,mtime,attrs,scan_id)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            rusqlite::params![
+                volume_id,
+                parent_id,
+                name,
+                depth,
+                is_dir as i64,
+                size as i64,
+                mtime,
+                attrs as i64,
+                scan_id
+            ],
+        )
+        .map_err(|e| CoreError::Database(format!("插入路径失败: {e}")))?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// 批量事务写入：单事务内插入一批路径，成功提交 / 失败整体回滚。
+    /// 返回成功插入的行数。这是"不出现半提交"的保证点。
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn insert_paths_tx(
+        conn: &Connection,
+        scan_id: i64,
+        volume_id: i64,
+        batch: &[tracenest_core::scanner::WalkEntry],
+        rel_ids: &mut std::collections::HashMap<String, i64>,
+    ) -> Result<usize, CoreError> {
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| CoreError::Database(format!("开启事务失败: {e}")))?;
+        for e in batch {
+            let (parent_rel, name) = match e.rel_path.rsplit_once('/') {
+                Some((p, n)) => (p.to_string(), n.to_string()),
+                None => (String::new(), e.name.clone()),
+            };
+            let parent_id = rel_ids.get(&parent_rel).copied();
+            let id = Self::insert_path_on(
+                &tx,
+                scan_id,
+                volume_id,
+                parent_id,
+                &name,
+                e.depth as i64 + 1,
+                e.is_dir,
+                e.size,
+                e.mtime,
+                e.attrs,
+            )?;
+            if e.is_dir {
+                rel_ids.insert(e.rel_path.clone(), id);
+            }
+        }
+        tx.commit()
+            .map_err(|e| CoreError::Database(format!("提交批次失败: {e}")))?;
+        Ok(batch.len())
+    }
+
+    /// 取最新一条 running 扫描代的 DB id（仅诊断用途；扫描流程已改为显式传递 id）。
     pub fn query_latest_running_scan(&self) -> Result<i64, CoreError> {
         self.conn
             .query_row(
@@ -234,7 +384,10 @@ impl Database {
             let total = size + delta.remove(&id).unwrap_or(0);
             if total > 0 {
                 self.conn
-                    .execute("UPDATE paths SET size=?1 WHERE id=?2", rusqlite::params![total, id])
+                    .execute(
+                        "UPDATE paths SET size=?1 WHERE id=?2",
+                        rusqlite::params![total, id],
+                    )
                     .map_err(|e| CoreError::Database(format!("聚合回写失败: {e}")))?;
             }
             if let Some(p) = parent {
@@ -244,7 +397,7 @@ impl Database {
         Ok(())
     }
 
-    /// 结束扫描任务（status 遵循七态模型）。
+    /// 结束扫描任务（status 遵循七态模型；end_note 记录终态补充说明）。
     pub fn finish_scan(
         &self,
         scan_id: i64,
@@ -252,12 +405,21 @@ impl Database {
         files_scanned: u64,
         dirs_scanned: u64,
         errors_count: u64,
+        end_note: Option<&str>,
     ) -> Result<(), CoreError> {
         self.conn
             .execute(
-                "UPDATE scans SET finished_at=?1, status=?2, files_scanned=?3, dirs_scanned=?4, errors_count=?5
-                 WHERE id=?6",
-                rusqlite::params![now_ms(), status, files_scanned as i64, dirs_scanned as i64, errors_count as i64, scan_id],
+                "UPDATE scans SET finished_at=?1, status=?2, files_scanned=?3, dirs_scanned=?4, errors_count=?5, end_note=?6
+                 WHERE id=?7",
+                rusqlite::params![
+                    now_ms(),
+                    status,
+                    files_scanned as i64,
+                    dirs_scanned as i64,
+                    errors_count as i64,
+                    end_note,
+                    scan_id
+                ],
             )
             .map_err(|e| CoreError::Database(format!("更新扫描记录失败: {e}")))?;
         Ok(())
@@ -271,7 +433,9 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("统计查询失败: {e}")))
         };
         Ok(DbStats {
-            schema_version: q("SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'")?,
+            schema_version: q(
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
+            )?,
             volumes: q("SELECT COUNT(*) FROM volumes")?,
             scans_total: q("SELECT COUNT(*) FROM scans")?,
             scans_running: q("SELECT COUNT(*) FROM scans WHERE status='running'")?,
@@ -299,10 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为1_各表为空() {
+    fn 空库初始化_版本为2_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 1);
+        assert_eq!(s.schema_version, 2);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -311,20 +475,41 @@ mod tests {
     #[test]
     fn 卷登记_幂等更新() {
         let db = mem_db();
-        let id1 = db.upsert_volume("C:\\", Some("系统"), Some(100), Some(50), Some("NTFS"), false).unwrap();
-        let id2 = db.upsert_volume("C:\\", Some("系统盘"), Some(200), Some(80), Some("NTFS"), false).unwrap();
+        let id1 = db
+            .upsert_volume(
+                "C:\\",
+                Some("系统"),
+                Some(100),
+                Some(50),
+                Some("NTFS"),
+                false,
+            )
+            .unwrap();
+        let id2 = db
+            .upsert_volume(
+                "C:\\",
+                Some("系统盘"),
+                Some(200),
+                Some(80),
+                Some("NTFS"),
+                false,
+            )
+            .unwrap();
         assert_eq!(id1, id2, "同一 root 应更新而非新增");
         let s = db.stats().unwrap();
         assert_eq!(s.volumes, 1);
     }
 
     #[test]
-    fn 扫描记录_完整生命周期() {
+    fn 扫描记录_完整生命周期_含end_note() {
         let db = mem_db();
-        let scan_id = db.begin_scan(&["D:\\".into()], "0.1.0-test").unwrap();
+        let scan_id = db
+            .begin_scan(&["D:\\".into()], "0.1.0-test", db.instance_id())
+            .unwrap();
         let s0 = db.stats().unwrap();
         assert_eq!(s0.scans_running, 1, "刚创建应为 running");
-        db.finish_scan(scan_id, "partial", 10, 2, 1).unwrap();
+        db.finish_scan(scan_id, "partial", 10, 2, 1, Some("测试终态说明"))
+            .unwrap();
         let s = db.stats().unwrap();
         assert_eq!(s.scans_total, 1);
         assert_eq!(s.scans_running, 0, "结束后不应再有 running");
@@ -351,7 +536,76 @@ mod tests {
         }
         {
             let db = Database::open(&p).unwrap();
-            assert_eq!(db.stats().unwrap().schema_version, 1, "二次打开不应重复迁移");
+            assert_eq!(
+                db.stats().unwrap().schema_version,
+                2,
+                "二次打开不应重复迁移"
+            );
         }
+    }
+
+    #[test]
+    fn v1旧库迁移到v2_历史数据保留() {
+        // 模拟一个真实的 v1 旧库：v1 结构 + 一条 v1 扫描记录 + 若干路径
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("legacy.db");
+        {
+            let raw = Connection::open(&p).unwrap();
+            raw.execute_batch(SCHEMA_SQL).unwrap(); // v1 基线
+            raw.execute(
+                "INSERT INTO meta(key,value) VALUES('schema_version','1')",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
+                 VALUES('E:\\','文档',1,1,'NTFS',0,0)",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO scans(started_at,status,roots,app_version) VALUES(0,'running','[\"E:\\\\\"]','0.1.0')",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,scan_id) VALUES(1,NULL,'E:',0,1,0,1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 旧库被新版打开 → 自动迁移到 v2
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 2, "旧库应迁移到 v2");
+        assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
+        // 旧 running 扫描可被恢复函数回收（instance_id 为 NULL）
+        let recovered = db.recover_orphaned_scans().unwrap();
+        assert_eq!(recovered.len(), 1, "孤儿 running 应被回收");
+        let row: (String, Option<String>) = db
+            .conn
+            .query_row("SELECT status, end_note FROM scans WHERE id=1", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(row.0, "failed");
+        assert!(row.1.unwrap().contains("退出"), "end_note 应说明恢复原因");
+    }
+
+    #[test]
+    fn 恢复函数_不误伤本实例任务() {
+        let db = mem_db();
+        let own = db
+            .begin_scan(&["C:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let foreign = db
+            .begin_scan(&["D:\\".into()], "t", "dead-instance-xyz")
+            .unwrap();
+        let recovered = db.recover_orphaned_scans().unwrap();
+        assert_eq!(recovered, vec![foreign], "只回收非本实例的 running");
+        let own_status: String = db
+            .conn
+            .query_row("SELECT status FROM scans WHERE id=?1", [own], |r| r.get(0))
+            .unwrap();
+        assert_eq!(own_status, "running", "本实例任务不得被误标");
     }
 }

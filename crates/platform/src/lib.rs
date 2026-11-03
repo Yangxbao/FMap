@@ -33,14 +33,16 @@ pub struct VolumeInfo {
     pub is_removable: bool,
 }
 
-/// 平台能力声明（M0：如实反映已实现范围）。
+/// 平台能力声明（如实反映已实现范围，UI 直接展示，不允许硬编码假数据）。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct PlatformCapabilities {
     /// 能枚举磁盘
     pub can_list_volumes: bool,
-    /// 能做文件元数据扫描（M1 实现）
+    /// 能扫描文件元数据（M1 已实现：只读遍历 + 入库）
     pub can_scan_metadata: bool,
-    /// 能做实时监控（M5/M1 实现，基于 notify）
+    /// 能读取文件正文（**永久 false**：产品只读元数据，见 SECURITY.md）
+    pub can_read_file_contents: bool,
+    /// 能做实时监控（M5 实现，基于 notify）
     pub can_watch: bool,
 }
 
@@ -140,15 +142,29 @@ mod windows_impl {
                 let root: String = String::from_utf16_lossy(&buf[start..end]);
                 start = end + 1;
 
-                let root_pc = PCWSTR(root.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>().as_ptr());
+                let root_pc = PCWSTR(
+                    root.encode_utf16()
+                        .chain(std::iter::once(0))
+                        .collect::<Vec<u16>>()
+                        .as_ptr(),
+                );
 
                 // 容量（任一失败都置 None，不虚构）；参数序：目录/可用/总/剩余
                 let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
                 let size_ok = unsafe {
-                    GetDiskFreeSpaceExW(root_pc, Some(&mut avail), Some(&mut total), Some(&mut free))
+                    GetDiskFreeSpaceExW(
+                        root_pc,
+                        Some(&mut avail),
+                        Some(&mut total),
+                        Some(&mut free),
+                    )
                 }
                 .is_ok();
-                let (total, free) = if size_ok { (Some(total), Some(free)) } else { (None, None) };
+                let (total, free) = if size_ok {
+                    (Some(total), Some(free))
+                } else {
+                    (None, None)
+                };
 
                 // 卷标与文件系统类型（切片缓冲）
                 let mut label_buf = [0u16; 261];
@@ -166,15 +182,30 @@ mod windows_impl {
                 .is_ok();
                 let label = if info_ok {
                     let l = utf16_to_string(&label_buf);
-                    if l.is_empty() { None } else { Some(l) }
+                    if l.is_empty() {
+                        None
+                    } else {
+                        Some(l)
+                    }
                 } else {
                     None
                 };
-                let fs_type = if info_ok { Some(utf16_to_string(&fs_buf)) } else { None };
+                let fs_type = if info_ok {
+                    Some(utf16_to_string(&fs_buf))
+                } else {
+                    None
+                };
 
                 let is_removable = unsafe { GetDriveTypeW(root_pc) } == DRIVE_REMOVABLE;
 
-                volumes.push(VolumeInfo { root, label, total_bytes: total, free_bytes: free, fs_type, is_removable });
+                volumes.push(VolumeInfo {
+                    root,
+                    label,
+                    total_bytes: total,
+                    free_bytes: free,
+                    fs_type,
+                    is_removable,
+                });
             }
             Ok(volumes)
         }
@@ -182,8 +213,9 @@ mod windows_impl {
         fn capabilities(&self) -> PlatformCapabilities {
             PlatformCapabilities {
                 can_list_volumes: true,
-                can_scan_metadata: false, // M1 实现
-                can_watch: false,         // M1/M5 实现
+                can_scan_metadata: true, // M1 已实现并真机验收（只读元数据遍历）
+                can_read_file_contents: false, // 产品原则：永不读取正文
+                can_watch: false,        // M5 实现
             }
         }
 
@@ -237,7 +269,12 @@ mod unsupported {
             ))
         }
         fn capabilities(&self) -> PlatformCapabilities {
-            PlatformCapabilities { can_list_volumes: false, can_scan_metadata: false, can_watch: false }
+            PlatformCapabilities {
+                can_list_volumes: false,
+                can_scan_metadata: false,
+                can_read_file_contents: false,
+                can_watch: false,
+            }
         }
         fn platform_name(&self) -> &'static str {
             std::env::consts::OS
@@ -259,13 +296,15 @@ mod tests {
     fn 能力声明与实现状态一致() {
         let p = create_provider();
         let caps = p.capabilities();
-        // M0 真相：只有 Windows 能列卷；扫描与监控都未实现
+        // M1 真相：Windows 已支持列卷与元数据扫描；监控未实现；读正文永不支持
         if p.platform_name() == "windows" {
             assert!(caps.can_list_volumes);
+            assert!(caps.can_scan_metadata, "Windows 元数据扫描已实现并真机验收");
         } else {
             assert!(!caps.can_list_volumes);
+            assert!(!caps.can_scan_metadata, "非 Windows 不得谎报扫描能力");
         }
-        assert!(!caps.can_scan_metadata, "M0 不得谎报扫描能力");
+        assert!(!caps.can_read_file_contents, "任何平台都不得读取文件正文");
         assert!(!caps.can_watch, "M0 不得谎报监控能力");
     }
 

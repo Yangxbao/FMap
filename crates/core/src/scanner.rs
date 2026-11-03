@@ -230,7 +230,9 @@ fn walk_recursive(
             Ok(md) => (
                 if md.is_dir() { 0 } else { md.len() },
                 md.modified().ok().and_then(|t| {
-                    t.duration_since(UNIX_EPOCH).ok().map(|d| d.as_millis() as i64)
+                    t.duration_since(UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_millis() as i64)
                 }),
             ),
             Err(_) => {
@@ -293,7 +295,16 @@ fn walk_recursive(
         // 深入子目录（链接不跟随）
         if is_dir && (options.follow_symlinks || !is_link) {
             let reason = walk_recursive(
-                root, &path, options, cancel, batch_size, batch, files, dirs, denied, on_batch,
+                root,
+                &path,
+                options,
+                cancel,
+                batch_size,
+                batch,
+                files,
+                dirs,
+                denied,
+                on_batch,
                 depth + 1,
             );
             if reason == ScanEndReason::Cancelled {
@@ -366,7 +377,13 @@ mod tests {
 
     #[test]
     fn 离线根_返回_volume_offline() {
-        let summary = scan_root(Path::new("Z:/__tracenest_not_exist__"), &ScanOptions::default(), None, 2, |_| {});
+        let summary = scan_root(
+            Path::new("Z:/__tracenest_not_exist__"),
+            &ScanOptions::default(),
+            None,
+            2,
+            |_| {},
+        );
         assert_eq!(summary.end_reason, ScanEndReason::RootOffline);
     }
 
