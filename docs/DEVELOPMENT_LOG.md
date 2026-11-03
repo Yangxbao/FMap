@@ -65,3 +65,15 @@
 | Windows 路径分隔符（normalize）导致静态服务器 403（昨日原型阶段同款问题） | ROOT 统一 path.normalize |
 
 **遗留**：Rust 编译/运行待工具链（唯一阻塞项，步骤见 M1_HANDOFF §5）。
+
+## 2026-11-04 · 工具链安装 + M1 真机验收（用户授权安装，主会话执行）
+
+**安装**：MSVC Build Tools v143 + WinSDK 26100 → D:\VS2022BuildTools（3.4GB）；Rust 1.99.1 minimal → D:\rust（RUSTUP_HOME/CARGO_HOME 已 setx，cargo\bin 已入用户 PATH）；C 盘仅新增 VS Installer 共享组件。
+
+**编译修复（3 轮，全部预期内）**：①platform——windows 0.61 切片式 API 重写（GetLogicalDriveStringsW/GetVolumeInformationW 传 &mut [u16]，DRIVE_REMOVABLE 本地常量）；②core 缺 dev-deps（tempfile/serde_json）；③src-tauri——漏 use tauri::Manager、ScanJob 导入、尾表达式临时 MutexGuard 借用（两处，改为先绑定再 Ok）。
+
+**测试结果（真实）**：cargo test --workspace → core 9/9 + database 5/5 + platform 3/3 = **17/17 全绿**；clippy 0 警告（并抓到一个真 bug：aggregate_dir_sizes 的 SQL ?1 未传参，已修）。
+
+**真机扫描验收（全链路）**：examples/scan 对账 fixture 1000 文件/400 目录精确一致（39.6ms）；examples/scan 扫 E 盘 279,448 文件 14.7s；**桌面应用端到端**：启动（普通用户权限 ✓）→ UI 显示三盘真实容量 → 勾选 E 盘开始扫描 → 实时进度 70,709→326,521 → SQLite 真实入库 **326,521 条路径**（node:sqlite 只读验证）。
+
+**发现的问题（转 M2）**：①scan_start 逐行 insert 未包事务，写库慢（设计有 2000/批事务但未落实到闭包）；②应用崩溃/被杀时 scans 遗留 running 状态，启动时应恢复为 failed；③platform capabilities 的 can_scan_metadata 仍为 false（M1 已实现扫描器，标签待更新）；④真机扫描完整跑完 + 取消一致性验证（本轮扫描 99.9% 完成后被验收性终止）。

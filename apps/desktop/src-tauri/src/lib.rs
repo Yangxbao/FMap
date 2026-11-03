@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::{Arc, Mutex};
+use tauri::Manager;
 use tracenest_database::Database;
 
 /// 单个扫描任务的运行句柄（后台线程持有，命令层读写）。
@@ -41,6 +42,12 @@ impl AppState {
             scans: Mutex::new(HashMap::new()),
             next_scan_id: AtomicI64::new(1),
         }
+    }
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -9,7 +9,7 @@
 use serde::Serialize;
 use tauri::State;
 
-use crate::AppState;
+use crate::{AppState, ScanJob};
 use tracenest_core::{APP_NAME, APP_VERSION};
 use tracenest_platform::VolumeInfo;
 
@@ -272,7 +272,8 @@ pub fn scan_start(
     });
 
     state.scans.lock().unwrap().insert(scan_id, ScanJob { cancel, progress: progress.clone() });
-    Ok(progress.lock().unwrap().clone())
+    let p = progress.lock().unwrap().clone(); // 同 scan_status：避免临时守卫跨过局部变量 Drop
+    Ok(p)
 }
 
 #[tauri::command]
@@ -281,7 +282,8 @@ pub fn scan_status(state: State<'_, AppState>, scan_id: i64) -> CmdResult<ScanPr
     let job = scans
         .get(&scan_id)
         .ok_or_else(|| CommandError::backend(format!("扫描任务不存在: {scan_id}")))?;
-    Ok(job.progress.lock().unwrap().clone())
+    let p = job.progress.lock().unwrap().clone(); // 语句内先克隆，避免临时守卫跨过 scans 的 Drop
+    Ok(p)
 }
 
 #[tauri::command]

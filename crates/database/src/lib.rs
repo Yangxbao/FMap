@@ -89,7 +89,7 @@ impl Database {
         let actual: i64 = self
             .conn
             .query_row(
-                "SELECT value FROM meta WHERE key='schema_version'",
+                "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
                 [],
                 |r| r.get(0),
             )
@@ -223,7 +223,7 @@ impl Database {
                 )
                 .map_err(|e| CoreError::Database(format!("聚合查询失败: {e}")))?;
             let iter = stmt
-                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .query_map([scan_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
                 .map_err(|e| CoreError::Database(format!("聚合映射失败: {e}")))?;
             iter.collect::<Result<Vec<_>, _>>()
                 .map_err(|e| CoreError::Database(format!("聚合读取失败: {e}")))?

@@ -220,7 +220,7 @@ fn walk_recursive(
         };
 
         // 排除目录（记录为跳过但不深入）
-        if is_dir && options.exclude_dir_names.iter().any(|x| *x == name) {
+        if is_dir && options.exclude_dir_names.contains(&name) {
             *denied += 1;
             continue;
         }

@@ -29,3 +29,4 @@ Thumbs.db
 # 临时
 *.log
 .tmp/
+tests/fixture-tree/

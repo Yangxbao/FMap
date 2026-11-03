@@ -93,16 +93,19 @@ pub fn is_process_elevated() -> Option<bool> {
 #[cfg(windows)]
 mod windows_impl {
     use super::*;
-    use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::Foundation::{HANDLE, ERROR_SUCCESS};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::HANDLE;
     use windows::Win32::Security::{
         GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY,
     };
     use windows::Win32::Storage::FileSystem::{
         GetDiskFreeSpaceExW, GetDriveTypeW, GetLogicalDriveStringsW, GetVolumeInformationW,
-        DRIVE_REMOVABLE,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    /// GetDriveTypeW 返回值：可移动介质（与 Win32 SDK DRIVE_REMOVABLE=2 一致；
+    /// windows 0.61 将其放在 System::WindowsProgramming，为最小依赖取本地常量）
+    const DRIVE_REMOVABLE: u32 = 2;
 
     /// Windows 磁盘发现：
     /// - `GetLogicalDriveStringsW`：枚举盘符（无需特权）
@@ -113,9 +116,9 @@ mod windows_impl {
 
     impl FileSystemProvider for WindowsProvider {
         fn list_volumes(&self) -> CoreResult<Vec<VolumeInfo>> {
-            // 缓冲区：盘符字符串形如 "C:\\\0D:\\\0...\0"，512 字节足够容纳盘符列表
+            // windows 0.61 切片式 API：GetLogicalDriveStringsW(Some(&mut buf)) -> 复制的 u16 数
             let mut buf = [0u16; 512];
-            let len = unsafe { GetLogicalDriveStringsW(buf.len() as u32, PWSTR(buf.as_mut_ptr())) };
+            let len = unsafe { GetLogicalDriveStringsW(Some(&mut buf)) };
             if len == 0 || len as usize > buf.len() {
                 return Err(CoreError::Unsupported(format!(
                     "GetLogicalDriveStringsW 失败 (len={len})"
@@ -123,7 +126,7 @@ mod windows_impl {
             }
 
             let mut volumes = Vec::new();
-            // 按双 NUL 分隔切分
+            // 按单 NUL 分隔切分（结尾双 NUL 由 end==start 终止）
             let mut start = 0usize;
             while start < len as usize {
                 let end = buf[start..len as usize]
@@ -137,34 +140,27 @@ mod windows_impl {
                 let root: String = String::from_utf16_lossy(&buf[start..end]);
                 start = end + 1;
 
-                let root_wide: Vec<u16> = root.encode_utf16().chain(std::iter::once(0)).collect();
+                let root_pc = PCWSTR(root.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>().as_ptr());
 
-                // 容量（任一失败都置 None，不虚构）
-                let (mut total, mut free) = (0u64, 0u64);
+                // 容量（任一失败都置 None，不虚构）；参数序：目录/可用/总/剩余
+                let (mut avail, mut total, mut free) = (0u64, 0u64, 0u64);
                 let size_ok = unsafe {
-                    GetDiskFreeSpaceExW(
-                        windows::core::PCWSTR(root_wide.as_ptr()),
-                        None,
-                        Some(&mut total),
-                        Some(&mut free),
-                    )
+                    GetDiskFreeSpaceExW(root_pc, Some(&mut avail), Some(&mut total), Some(&mut free))
                 }
                 .is_ok();
                 let (total, free) = if size_ok { (Some(total), Some(free)) } else { (None, None) };
 
-                // 卷标与文件系统类型
+                // 卷标与文件系统类型（切片缓冲）
                 let mut label_buf = [0u16; 261];
                 let mut fs_buf = [0u16; 64];
                 let info_ok = unsafe {
                     GetVolumeInformationW(
-                        windows::core::PCWSTR(root_wide.as_ptr()),
-                        Some(PWSTR(label_buf.as_mut_ptr())),
-                        label_buf.len() as u32,
+                        root_pc,
+                        Some(&mut label_buf),
                         None,
                         None,
                         None,
-                        Some(PWSTR(fs_buf.as_mut_ptr())),
-                        fs_buf.len() as u32,
+                        Some(&mut fs_buf),
                     )
                 }
                 .is_ok();
@@ -176,8 +172,7 @@ mod windows_impl {
                 };
                 let fs_type = if info_ok { Some(utf16_to_string(&fs_buf)) } else { None };
 
-                let drive_type = unsafe { GetDriveTypeW(windows::core::PCWSTR(root_wide.as_ptr())) };
-                let is_removable = drive_type == DRIVE_REMOVABLE;
+                let is_removable = unsafe { GetDriveTypeW(root_pc) } == DRIVE_REMOVABLE;
 
                 volumes.push(VolumeInfo { root, label, total_bytes: total, free_bytes: free, fs_type, is_removable });
             }
@@ -217,7 +212,6 @@ mod windows_impl {
                 std::mem::size_of::<TOKEN_ELEVATION>() as u32,
                 &mut ret_len,
             );
-            let _ = ERROR_SUCCESS; // 引用避免未使用告警（token 句柄由系统关闭策略处理）
             if ok.is_ok() {
                 Some(elevation.TokenIsElevated != 0)
             } else {
