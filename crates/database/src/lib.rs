@@ -21,15 +21,18 @@ use rusqlite::Connection;
 use tracenest_core::CoreError;
 
 /// 内嵌的权威 Schema（与 tests/schema.sql 同源，避免两处维护）。
-/// 注意：SCHEMA_SQL 为 v1 基线；v2 的增量列由 migrate() 以 ALTER 应用，
-/// 保证 v1 旧库与全新库收敛到同一结构。
+/// 注意：SCHEMA_SQL 为 v1 基线；v2+ 的增量列/表由 migrate() 以 ALTER /
+/// CREATE IF NOT EXISTS 应用，保证 v1 旧库与全新库收敛到同一结构。
 pub const SCHEMA_SQL: &str = include_str!("../../../tests/schema.sql");
+
+/// v5 增量 DDL（M3-A 文件资产基础模型：五张新表；与 tests/schema_v5.sql 同源）。
+pub const SCHEMA_V5_SQL: &str = include_str!("../../../tests/schema_v5.sql");
 
 /// 内置 AI 工具规则包 v1（来源 rules/builtin-rules-v1.json，含来源与依据说明）。
 pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -173,7 +176,31 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("提交 v4 迁移失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 5 { ... }
+        // v4 → v5：**M3-A 文件资产基础模型**——新增五表（file_entities /
+        // source_evidence / file_events / source_candidates / source_confirmations，
+        // 三层分模型见 schema_v5.sql 头注）+ volumes.volume_guid（身份键不用盘符）
+        // + attributions.entity_id（M2 工具关联 → 文件实体关联，历史行为 NULL）。
+        // 全部非破坏；历史数据不动；版本号与 DDL 同事务。
+        if current < 5 {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v5 迁移事务失败: {e}")))?;
+            tx.execute_batch(SCHEMA_V5_SQL)
+                .map_err(|e| CoreError::Database(format!("应用 schema v5 失败: {e}")))?;
+            Self::ensure_column(&tx, "volumes", "volume_guid", "TEXT")?;
+            Self::ensure_column(
+                &tx,
+                "attributions",
+                "entity_id",
+                "INTEGER REFERENCES file_entities(id)",
+            )?;
+            Self::set_schema_version(&tx, 5)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v5 迁移失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 6 { ... }
 
         let actual: i64 = self
             .conn
@@ -519,6 +546,51 @@ impl Database {
             paths_total: q("SELECT COUNT(*) FROM paths")?,
         })
     }
+
+    /// 读取一个 meta 键值（应用级设置；key 为本 crate 硬编码常量，无注入风险）。
+    pub fn get_meta(&self, key: &str) -> Result<Option<String>, CoreError> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM meta WHERE key=?1")
+            .map_err(|e| CoreError::Database(format!("读取 meta 失败: {e}")))?;
+        let mut rows = stmt
+            .query([key])
+            .map_err(|e| CoreError::Database(format!("读取 meta 失败: {e}")))?;
+        match rows
+            .next()
+            .map_err(|e| CoreError::Database(format!("读取 meta 失败: {e}")))?
+        {
+            Some(r) => {
+                Ok(Some(r.get(0).map_err(|e| {
+                    CoreError::Database(format!("读取 meta 失败: {e}"))
+                })?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// 写入一个 meta 键值（UPSERT）。
+    pub fn set_meta(&self, key: &str, value: &str) -> Result<(), CoreError> {
+        self.conn
+            .execute(
+                "INSERT INTO meta(key,value) VALUES(?1,?2)
+                 ON CONFLICT(key) DO UPDATE SET value=?2",
+                rusqlite::params![key, value],
+            )
+            .map_err(|e| CoreError::Database(format!("写入 meta 失败: {e}")))?;
+        Ok(())
+    }
+
+    /// 记录卷 GUID（身份键基础；采集开启后由身份解析取得，撤销授权时可清除）。
+    pub fn set_volume_guid(&self, volume_id: i64, guid: Option<&str>) -> Result<(), CoreError> {
+        self.conn
+            .execute(
+                "UPDATE volumes SET volume_guid=?1 WHERE id=?2",
+                rusqlite::params![guid, volume_id],
+            )
+            .map_err(|e| CoreError::Database(format!("写入卷 GUID 失败: {e}")))?;
+        Ok(())
+    }
 }
 
 /// 首页"系统状态"数据（全部真实查询，无任何演示值）。
@@ -540,10 +612,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为4_各表为空() {
+    fn 空库初始化_版本为5_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 4);
+        assert_eq!(s.schema_version, 5);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -615,7 +687,7 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                4,
+                5,
                 "二次打开不应重复迁移"
             );
         }
@@ -651,11 +723,11 @@ mod tests {
             )
             .unwrap();
         }
-        // 旧库被新版打开 → 自动迁移到 v2
+        // 旧库被新版打开 → 自动迁移到最新版
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            4,
+            5,
             "旧库应迁移到最新版本"
         );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
@@ -756,9 +828,9 @@ mod tests {
             )
             .unwrap();
         }
-        // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4），数据保留
+        // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4 → v5），数据保留
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 4);
+        assert_eq!(db.stats().unwrap().schema_version, 5);
         assert_eq!(db.stats().unwrap().paths_total, 1, "崩溃恢复不得丢失数据");
         // 遗留 running（instance_id='dead' ≠ 当前实例）→ 启动恢复由调用方触发；此处仅验证列齐全
         let cols: Vec<String> = db
@@ -783,14 +855,214 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("t.db");
         {
-            let db = Database::open(&p).unwrap(); // 已迁移到 v4
-        }
-        // 手动把 v4 列全部预建（模拟"列已存在"场景）
-        {
-            let raw = Connection::open(&p).unwrap();
-            let _ = raw.execute("ALTER TABLE attributions DROP COLUMN source_behavior", []);
+            let db = Database::open(&p).unwrap(); // 已迁移到 v5
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 4);
+        assert_eq!(db.stats().unwrap().schema_version, 5);
+    }
+
+    /// 构造一个真实的 v4 库（v1 基线 + v2/v3/v4 增量列 + 样例数据），
+    /// 用于验证 v4 → v5 迁移（这是要跑在用户 50 万行真实库上的路径）。
+    fn make_v4_legacy_db(p: &Path) {
+        let raw = Connection::open(p).unwrap();
+        raw.execute_batch(SCHEMA_SQL).unwrap();
+        // v2 增量
+        raw.execute("ALTER TABLE scans ADD COLUMN instance_id TEXT", [])
+            .unwrap();
+        raw.execute("ALTER TABLE scans ADD COLUMN end_note TEXT", [])
+            .unwrap();
+        // v3 增量
+        raw.execute(
+            "ALTER TABLE rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .unwrap();
+        raw.execute("ALTER TABLE rules ADD COLUMN weight REAL", [])
+            .unwrap();
+        raw.execute("ALTER TABLE rules ADD COLUMN evidence TEXT", [])
+            .unwrap();
+        raw.execute("ALTER TABLE tools ADD COLUMN kind TEXT", [])
+            .unwrap();
+        // v4 增量
+        raw.execute(
+            "ALTER TABLE attributions ADD COLUMN source_behavior TEXT NOT NULL DEFAULT 'unknown'",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO meta(key,value) VALUES('schema_version','4')",
+            [],
+        )
+        .unwrap();
+        // 样例数据：卷 / 扫描 / 路径 / 工具 / 归属
+        raw.execute(
+            "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
+             VALUES('E:\\','文档',1,1,'NTFS',0,0)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO scans(started_at,status,roots,app_version) VALUES(0,'done','[\"E:\\\\\"]','0.1.0')",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,scan_id)
+             VALUES(1,NULL,'E:',0,1,0,1),
+                   (1,1,'.codex',1,1,0,1)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO tools(key,name,vendor,kind,color,builtin) VALUES('codex','Codex','','cli','#111',1)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO attributions(path_id,scan_id,tool_id,confidence,score,basis,source_behavior)
+             VALUES(2,1,1,'verified',1.0,'{}','unknown')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v4旧库迁移到v5_历史数据保留且五表可用() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("v4.db");
+        make_v4_legacy_db(&p);
+        let counts_before: (i64, i64, i64) = {
+            let raw = Connection::open(&p).unwrap();
+            (
+                raw.query_row("SELECT COUNT(*) FROM paths", [], |r| r.get(0))
+                    .unwrap(),
+                raw.query_row("SELECT COUNT(*) FROM attributions", [], |r| r.get(0))
+                    .unwrap(),
+                raw.query_row("SELECT COUNT(*) FROM tools", [], |r| r.get(0))
+                    .unwrap(),
+            )
+        };
+
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 5);
+        // 历史数据一行不少
+        assert_eq!(db.stats().unwrap().paths_total, counts_before.0);
+        let attr_n: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM attributions", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(attr_n, counts_before.1);
+        // v5 五表存在且可用（外键生效：孤立实体插入必须被拒）
+        assert!(
+            db.conn
+                .execute(
+                    "INSERT INTO file_events(entity_id,ts,kind) VALUES(999,0,'x')",
+                    []
+                )
+                .is_err(),
+            "file_events.entity_id 外键必须生效"
+        );
+        // entity 关联列可写（ attributions.entity_id → file_entities.id ）
+        db.conn
+            .execute(
+                "INSERT INTO file_entities(volume_id,identity_kind,file_id,first_seen_at,last_seen_at)
+                 VALUES(1,'file_id',42,0,0)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute("UPDATE attributions SET entity_id=1 WHERE path_id=2", [])
+            .unwrap();
+        let linked: Option<i64> = db
+            .conn
+            .query_row(
+                "SELECT entity_id FROM attributions WHERE path_id=2",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(linked, Some(1));
+    }
+
+    #[test]
+    fn v5半迁移状态_部分表已建可安全续跑() {
+        // 模拟 v5 阶段中断后的残留：v4 库 + file_entities 已建（但版本号仍是 4）
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("half-v5.db");
+        make_v4_legacy_db(&p);
+        {
+            let raw = Connection::open(&p).unwrap();
+            // 手动应用 v5 DDL 的一部分（如真实崩溃后残留——虽然同事务回滚下
+            // 理论不会发生，此处验证"部分表已存在"仍可收敛）
+            raw.execute_batch(
+                "CREATE TABLE IF NOT EXISTS file_entities (
+                    id INTEGER PRIMARY KEY,
+                    volume_id INTEGER NOT NULL REFERENCES volumes(id),
+                    identity_kind TEXT NOT NULL,
+                    file_id INTEGER,
+                    check_size INTEGER,
+                    check_mtime INTEGER,
+                    weak_path TEXT,
+                    current_path_id INTEGER REFERENCES paths(id),
+                    first_seen_scan_id INTEGER REFERENCES scans(id),
+                    last_seen_scan_id INTEGER REFERENCES scans(id),
+                    first_seen_at INTEGER NOT NULL,
+                    last_seen_at INTEGER NOT NULL,
+                    deleted_at INTEGER
+                 );",
+            )
+            .unwrap();
+        }
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 5);
+        // 重复建表不报错、其余四表补齐、数据保留
+        let tables: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN
+                 ('file_entities','file_events','source_evidence','source_candidates','source_confirmations')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 5, "五张 v5 表必须齐全");
+        assert_eq!(db.stats().unwrap().paths_total, 2);
+    }
+
+    #[test]
+    fn meta读写与卷guid() {
+        let db = mem_db();
+        assert_eq!(db.get_meta("identity_collection_enabled").unwrap(), None);
+        db.set_meta("identity_collection_enabled", "1").unwrap();
+        assert_eq!(
+            db.get_meta("identity_collection_enabled").unwrap(),
+            Some("1".into())
+        );
+        db.set_meta("identity_collection_enabled", "0").unwrap();
+        assert_eq!(
+            db.get_meta("identity_collection_enabled").unwrap(),
+            Some("0".into())
+        );
+        // 卷 GUID
+        let vol = db
+            .upsert_volume("E:\\", None, None, None, Some("NTFS"), false)
+            .unwrap();
+        db.set_volume_guid(vol, Some(r"\\?\Volume{1234abcd-11}"))
+            .unwrap();
+        let guid: Option<String> = db
+            .conn
+            .query_row("SELECT volume_guid FROM volumes WHERE id=?1", [vol], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(guid.as_deref(), Some(r"\\?\Volume{1234abcd-11}"));
+        db.set_volume_guid(vol, None).unwrap();
+        let guid: Option<String> = db
+            .conn
+            .query_row("SELECT volume_guid FROM volumes WHERE id=?1", [vol], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(guid.is_none(), "撤销授权时可清除 GUID");
     }
 }
