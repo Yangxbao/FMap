@@ -68,9 +68,9 @@ mod windows_impl {
     use windows::Win32::Storage::FileSystem::{
         CreateFileW, FileIdBothDirectoryInfo, GetFileInformationByHandle,
         GetFileInformationByHandleEx, GetVolumeInformationW, GetVolumeNameForVolumeMountPointW,
-        BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_ID_BOTH_DIR_INFO,
-        FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_MODE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        OPEN_EXISTING,
+        GetVolumePathNameW, BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS,
+        FILE_ID_BOTH_DIR_INFO, FILE_LIST_DIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, OPEN_EXISTING,
     };
 
     /// FILETIME（100ns since 1601-01-01）→ unix 毫秒。0（未设置）→ None。
@@ -94,6 +94,8 @@ mod windows_impl {
     /// 卷身份：序列号（GetVolumeInformationW）+ 卷 GUID
     /// （GetVolumeNameForVolumeMountPointW，M2 交接文档 §15 的"待验证"项，
     /// 本函数即验证实现；普通用户权限，失败如实返回 None 不虚构）。
+    /// 任意路径（含卷内子目录）→ 先用 GetVolumePathNameW 解析到其所在
+    /// 卷的挂载点，再取 GUID——因此对扫描根与任意目录都可用。
     pub fn volume_identity(root: &str) -> CoreResult<VolumeIdentity> {
         let root_norm = if root.ends_with('\\') {
             root.to_string()
@@ -117,14 +119,16 @@ mod windows_impl {
         };
         let serial_number = if info_ok.is_ok() { Some(serial) } else { None };
 
-        // 卷 GUID（缓冲按文档取 60 字符，远超 GUID 路径的 ~50）
-        let mut guid_buf = [0u16; 60];
-        let volume_guid = unsafe { GetVolumeNameForVolumeMountPointW(root_pc, &mut guid_buf) }
-            .ok()
-            .map(|_| {
-                let g = utf16(&guid_buf);
-                g.trim_end_matches('\\').to_string()
-            });
+        // 卷 GUID：任意路径 → 所在卷挂载点 → GUID（缓冲 60 字符远超 ~50 需求）
+        let volume_guid = (|| -> Option<String> {
+            let mut mount_buf = [0u16; 261]; // 最长挂载点路径
+            unsafe { GetVolumePathNameW(root_pc, &mut mount_buf) }.ok()?;
+            let mount = utf16(&mount_buf);
+            let mount_pc = PCWSTR(to_wide(&mount).as_ptr());
+            let mut guid_buf = [0u16; 60];
+            unsafe { GetVolumeNameForVolumeMountPointW(mount_pc, &mut guid_buf) }.ok()?;
+            Some(utf16(&guid_buf).trim_end_matches('\\').to_string())
+        })();
 
         if serial_number.is_none() && volume_guid.is_none() {
             return Err(CoreError::Unsupported(format!(

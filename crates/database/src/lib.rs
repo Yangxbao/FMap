@@ -11,8 +11,10 @@
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
 
 pub mod attribution_pass;
+pub mod identity_pass;
 pub mod rules_loader;
 pub mod scan_writer;
+pub mod source;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -855,7 +857,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("t.db");
         {
-            let db = Database::open(&p).unwrap(); // 已迁移到 v5
+            let _db = Database::open(&p).unwrap(); // 已迁移到 v5
         }
         let db = Database::open(&p).unwrap();
         assert_eq!(db.stats().unwrap().schema_version, 5);
