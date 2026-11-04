@@ -66,6 +66,16 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// 卷身份行（identity_volumes 查询结果）。
+#[derive(Debug, Clone, Serialize)]
+pub struct VolumeIdentityRow {
+    pub volume_id: i64,
+    pub root: String,
+    pub fs_type: Option<String>,
+    pub volume_guid: Option<String>,
+    pub entity_count: i64,
+}
+
 /// 身份采集总览（设置页/总览页数据源；全部真实查询）。
 #[derive(Debug, Clone, Serialize)]
 pub struct SourceOverview {
@@ -212,6 +222,31 @@ impl Database {
             candidates: q("SELECT COUNT(*) FROM source_candidates")?,
             events: q("SELECT COUNT(*) FROM file_events")?,
         })
+    }
+
+    /// 已登记卷的身份采集视图（root/fs_type/GUID/实体计数）。
+    pub fn identity_volumes(&self) -> Result<Vec<VolumeIdentityRow>, CoreError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT v.id, v.root, v.fs_type, v.volume_guid,
+                        (SELECT COUNT(*) FROM file_entities fe WHERE fe.volume_id=v.id)
+                 FROM volumes v ORDER BY v.root",
+            )
+            .map_err(|e| CoreError::Database(format!("卷身份列表查询失败: {e}")))?;
+        let iter = stmt
+            .query_map([], |r| {
+                Ok(VolumeIdentityRow {
+                    volume_id: r.get(0)?,
+                    root: r.get(1)?,
+                    fs_type: r.get(2)?,
+                    volume_guid: r.get(3)?,
+                    entity_count: r.get(4)?,
+                })
+            })
+            .map_err(|e| CoreError::Database(format!("卷身份列表读取失败: {e}")))?;
+        iter.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CoreError::Database(format!("卷身份列表读取失败: {e}")))
     }
 
     // ---------------- 用户确认 / 撤销（唯一的行为写入路径） ----------------

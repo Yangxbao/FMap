@@ -11,10 +11,11 @@
 
 mod commands;
 mod commands_m2;
+mod commands_m3;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicI64};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tracenest_database::Database;
@@ -33,6 +34,8 @@ pub struct AppState {
     pub db_error: Mutex<Option<String>>,
     pub db_path: Mutex<Option<PathBuf>>,
     pub scans: Mutex<HashMap<i64, ScanJob>>,
+    /// M3-A 身份采集任务（单任务约束）
+    pub backfill: Mutex<Option<commands_m3::BackfillJob>>,
     pub next_scan_id: AtomicI64,
     /// 本实例标识（scan_start 写入 scans.instance_id，启动恢复据此判定孤儿任务）
     pub instance_id: String,
@@ -45,6 +48,7 @@ impl AppState {
             db_error: Mutex::new(None),
             db_path: Mutex::new(None),
             scans: Mutex::new(HashMap::new()),
+            backfill: Mutex::new(None),
             next_scan_id: AtomicI64::new(1),
             instance_id: format!(
                 "{:x}-{:x}",
@@ -141,7 +145,31 @@ pub fn run() {
             commands_m2::get_tools_overview,
             commands_m2::get_tool_detail,
             commands_m2::set_rule_enabled,
+            commands_m3::get_identity_settings,
+            commands_m3::set_identity_collection,
+            commands_m3::revoke_identity_collection,
+            commands_m3::list_identity_volumes,
+            commands_m3::identity_backfill_start,
+            commands_m3::identity_backfill_status,
+            commands_m3::identity_backfill_cancel,
+            commands_m3::get_path_source_detail,
+            commands_m3::confirm_source,
+            commands_m3::revoke_source,
         ])
-        .run(tauri::generate_context!())
-        .expect("FMap 桌面应用运行失败");
+        .build(tauri::generate_context!())
+        .expect("FMap 桌面应用构建失败")
+        .run(|app, event| {
+            // 关闭钩子（交接遗留 #3）：应用退出时请求取消在跑的扫描与身份采集。
+            // 已提交批次由 SQLite/WAL 持久化，不会出现半提交；未提交批自然回滚。
+            if matches!(event, tauri::RunEvent::Exit) {
+                let state = app.state::<AppState>();
+                for job in state.scans.lock().unwrap().values() {
+                    job.cancel.store(true, Ordering::Relaxed);
+                }
+                if let Some(b) = state.backfill.lock().unwrap().as_ref() {
+                    b.cancel.store(true, Ordering::Relaxed);
+                }
+                eprintln!("[FMap] 退出：已请求取消全部在跑任务（扫描/身份采集）");
+            }
+        });
 }

@@ -28,6 +28,9 @@ use tracenest_core::CoreError;
 use crate::source;
 use crate::Database;
 
+/// 默认批次大小：与扫描写入一致的 5000 条/事务。
+pub const DEFAULT_IDENTITY_BATCH_SIZE: usize = 5000;
+
 /// 回填进度（src-tauri 桥接到前端）。
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct IdentityBackfillProgress {
