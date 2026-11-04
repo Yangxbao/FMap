@@ -16,6 +16,8 @@
 use serde::{Deserialize, Serialize};
 use tracenest_core::{CoreError, CoreResult};
 
+pub mod identity;
+
 /// 一个可访问的卷（磁盘/挂载根）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VolumeInfo {
