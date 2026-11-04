@@ -1,8 +1,10 @@
-/** AI 工具识别中心（M2）：真实归属数据展示，无演示数据。
+/** AI 工具识别中心（M2 归属 + M3-A 来源确认）：真实归属数据展示，无演示数据。
  *  数据源：run_attribution / get_tools_overview / get_tool_detail（本地 SQLite）。
- */
+ *  语义红线：工具关联 ≠ 文件来源。来源行为只能由用户确认（M3-A），
+ *  未确认一律显示「未知」。 */
 import { useCallback, useEffect, useState } from "react";
-import { api, IpcError } from "../lib/ipc";
+import { api, IpcError, type PathSourceDetail, type SourceBehavior } from "../lib/ipc";
+import { eventKindLabel, sourceActionLabel, sourceBehaviorLabel } from "../lib/format";
 
 type Overview = {
   key: string;
@@ -24,7 +26,7 @@ type Detail = {
   key: string;
   name: string;
   kind: string;
-  top_paths: { full_path: string; is_dir: boolean; size: number; confidence: string }[];
+  top_paths: { path_id: number; full_path: string; is_dir: boolean; size: number; confidence: string }[];
   rules: {
     id: number;
     pattern: string;
@@ -43,9 +45,6 @@ function fmtBytes(n: number): string {
   if (n >= 1024) return (n / 1024).toFixed(1) + " KB";
   return n + " B";
 }
-function fmtTime(ms: number | null): string {
-  return ms ? new Date(ms).toLocaleString("zh-CN") : "—";
-}
 
 const LEVEL_BADGE: Record<string, string> = {
   verified: "text-[#6ccb5f] border-[#6ccb5f]/40",
@@ -53,12 +52,171 @@ const LEVEL_BADGE: Record<string, string> = {
   possible: "text-[#9aa0a6] border-[#35373c]",
 };
 
+const CONFIRMABLE: SourceBehavior[] = [
+  "ai_created",
+  "ai_modified",
+  "ai_downloaded",
+  "user_created",
+  "user_modified",
+];
+
+function fmtTime(ms: number | null): string {
+  return ms ? new Date(ms).toLocaleString("zh-CN") : "—";
+}
+
+/** 来源确认面板（M3-A）：身份信息 + 有效结论 + 确认历史 + 事件时间线 + 确认表单。 */
+function SourcePanel(props: { pathId: number; onDone: () => void }) {
+  const [detail, setDetail] = useState<PathSourceDetail | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [behavior, setBehavior] = useState<SourceBehavior>("ai_created");
+  const [note, setNote] = useState("");
+
+  const load = useCallback(() => {
+    api
+      .getPathSourceDetail(props.pathId)
+      .then(setDetail)
+      .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
+  }, [props.pathId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const submit = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.confirmSource(props.pathId, behavior, note.trim() ? note.trim() : null);
+      setNote("");
+      load();
+      props.onDone();
+    } catch (e: unknown) {
+      setErr(e instanceof IpcError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revoke = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.revokeSource(props.pathId, note.trim() ? note.trim() : null);
+      setNote("");
+      load();
+      props.onDone();
+    } catch (e: unknown) {
+      setErr(e instanceof IpcError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (err && !detail) return <div className="px-3 py-2 text-[12px] text-[#f26d6d]">{err}</div>;
+  if (!detail) return <div className="px-3 py-2 text-[12px] text-[#9aa0a6]">加载来源信息…</div>;
+
+  const ent = detail.entity;
+  const eff = detail.effective;
+
+  return (
+    <div className="mx-1 my-1.5 rounded-md border border-[#4cc2ff]/30 bg-[#1f2023] p-3 text-[12px]">
+      {/* 身份信息 */}
+      <div className="mb-2 text-[11.5px] text-[#9aa0a6]">
+        {ent ? (
+          <>
+            文件身份：<b className="text-[#e8eaed]">{ent.identity_kind === "file_id" ? `FileId ${ent.file_id}` : "弱身份（路径）"}</b>
+            {" · "}首次发现 {fmtTime(ent.first_seen_at)} · 最近发现 {fmtTime(ent.last_seen_at)}
+          </>
+        ) : (
+          <>未采集文件身份（在总览页运行身份采集后，此处才能进行来源确认）</>
+        )}
+      </div>
+
+      {/* 有效结论 */}
+      <div className="mb-2">
+        当前来源：
+        {eff && eff.behavior !== "unknown" ? (
+          <span className="ml-1 rounded border border-[#6ccb5f]/40 px-1.5 text-[11px] text-[#6ccb5f]">
+            {sourceBehaviorLabel(eff.behavior)}（用户{sourceActionLabel(eff.action)} · {fmtTime(eff.created_at)}）
+          </span>
+        ) : eff ? (
+          <span className="ml-1 rounded border border-[#35373c] px-1.5 text-[11px] text-[#9aa0a6]">未知（用户已撤销确认）</span>
+        ) : (
+          <span className="ml-1 rounded border border-[#35373c] px-1.5 text-[11px] text-[#9aa0a6]">未知（自动分析不判定来源行为）</span>
+        )}
+      </div>
+
+      {/* 确认表单 */}
+      {ent && (
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <select
+            className="rounded border border-[#35373c] bg-[#24262a] px-2 py-1 text-[12px]"
+            value={behavior}
+            onChange={(e) => setBehavior(e.target.value as SourceBehavior)}
+            disabled={busy}
+          >
+            {CONFIRMABLE.map((b) => (
+              <option key={b} value={b}>{sourceBehaviorLabel(b)}</option>
+            ))}
+          </select>
+          <input
+            className="min-w-40 flex-1 rounded border border-[#35373c] bg-[#24262a] px-2 py-1 text-[12px]"
+            placeholder="备注（可选）"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            disabled={busy}
+          />
+          <button className="rounded bg-[#4cc2ff] px-3 py-1 text-[12px] font-semibold text-white disabled:opacity-40" disabled={busy} onClick={submit}>
+            {eff && eff.behavior !== "unknown" ? "修正确认" : "确认来源"}
+          </button>
+          {eff && eff.behavior !== "unknown" && (
+            <button className="rounded border border-[#f26d6d] px-3 py-1 text-[12px] text-[#f26d6d] disabled:opacity-40" disabled={busy} onClick={revoke}>
+              撤销确认
+            </button>
+          )}
+        </div>
+      )}
+
+      {err && <div className="mb-2 text-[12px] text-[#f26d6d]">{err}</div>}
+
+      {/* 确认历史（append-only） */}
+      {detail.confirmations.length > 0 && (
+        <div className="mb-2">
+          <div className="mb-1 text-[11px] font-semibold text-[#9aa0a6]">确认历史（保留全部修正记录）</div>
+          {detail.confirmations.map((c) => (
+            <div key={c.id} className="text-[11.5px] text-[#9aa0a6]">
+              {fmtTime(c.created_at)} · {sourceActionLabel(c.action)} → <b>{sourceBehaviorLabel(c.behavior)}</b>
+              {c.note && <> · “{c.note}”</>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* 事件时间线 */}
+      <div>
+        <div className="mb-1 text-[11px] font-semibold text-[#9aa0a6]">事件时间线（append-only，不可被自动判断覆盖）</div>
+        {detail.events.length === 0 && <div className="text-[11.5px] text-[#6b7075]">（暂无事件；发现/修改事件将由后续版本的差分追踪产生）</div>}
+        {detail.events.map((e) => (
+          <div key={e.id} className="text-[11.5px] text-[#9aa0a6]">
+            {fmtTime(e.ts)} · {eventKindLabel(e.kind)}
+            {e.evidence_id != null && <> · 证据 #{e.evidence_id}</>}
+            {e.detail && e.kind === "file_id_reuse_suspected" && <> · {e.detail}</>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function Tools() {
   const [overview, setOverview] = useState<Overview[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  /** 当前展开来源面板的 path_id（null = 收起） */
+  const [sourcePanel, setSourcePanel] = useState<number | null>(null);
 
   const load = useCallback(() => {
     setError(null);
@@ -214,31 +372,50 @@ export function Tools() {
           </h2>
 
           <h3 className="mb-1.5 mt-3 text-[13px] font-semibold text-[#9aa0a6]">
-            归属 Top 路径（按大小）
+            归属 Top 路径（按大小 · 可展开来源确认）
           </h3>
           <div className="rounded-md border border-[#35373c] bg-[#1f2023] p-1">
             {detail.top_paths.length === 0 && (
               <div className="p-3 text-[12px] text-[#6b7075]">（无）</div>
             )}
-            {detail.top_paths.map((p, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 px-3 py-1.5 font-mono text-[11.5px] hover:bg-[#2c2e33]"
-              >
-                <span className="w-14 shrink-0 text-[#6b7075]">{fmtBytes(p.size)}</span>
-                <span
-                  className={
-                    "w-16 shrink-0 rounded border px-1 text-center text-[10px] " +
-                    (LEVEL_BADGE[p.confidence] ?? "")
-                  }
+            {detail.top_paths.map((p) => (
+              <div key={p.path_id}>
+                <div
+                  className="flex items-center gap-3 px-3 py-1.5 font-mono text-[11.5px] hover:bg-[#2c2e33]"
                 >
-                  {p.confidence}
-                </span>
-                <span className="truncate" title={p.full_path}>
-                  {p.full_path}
-                </span>
+                  <span className="w-14 shrink-0 text-[#6b7075]">{fmtBytes(p.size)}</span>
+                  <span
+                    className={
+                      "w-16 shrink-0 rounded border px-1 text-center text-[10px] " +
+                      (LEVEL_BADGE[p.confidence] ?? "")
+                    }
+                  >
+                    {p.confidence}
+                  </span>
+                  <span className="truncate" title={p.full_path}>
+                    {p.full_path}
+                  </span>
+                  <button
+                    className={
+                      "shrink-0 rounded border px-1.5 text-[10px] " +
+                      (sourcePanel === p.path_id
+                        ? "border-[#4cc2ff]/50 text-[#4cc2ff]"
+                        : "border-[#35373c] text-[#9aa0a6] hover:border-[#4cc2ff]/50 hover:text-[#4cc2ff]")
+                    }
+                    onClick={() => setSourcePanel(sourcePanel === p.path_id ? null : p.path_id)}
+                  >
+                    来源
+                  </button>
+                </div>
+                {sourcePanel === p.path_id && (
+                  <SourcePanel pathId={p.path_id} onDone={() => {}} />
+                )}
               </div>
             ))}
+          </div>
+          <div className="mt-1.5 text-[11px] text-[#6b7075]">
+            「来源」= 文件来源行为的用户确认（M3-A）。工具关联（上方徽标）不等于来源：
+            自动分析永远显示未知，只有你的手动确认才会改变它。
           </div>
 
           <h3 className="mb-1.5 mt-4 text-[13px] font-semibold text-[#9aa0a6]">

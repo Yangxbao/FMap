@@ -36,3 +36,36 @@ export function pageFromHash(hash: string): PageId {
   const id = hash.replace(/^#\/?/, "");
   return isPageId(id) ? id : "overview";
 }
+
+/** 来源行为 → 中文标签（未知值原样返回，绝不编造）。 */
+export function sourceBehaviorLabel(b: string): string {
+  const map: Record<string, string> = {
+    ai_created: "AI 创建",
+    ai_modified: "AI 修改",
+    ai_downloaded: "AI 下载",
+    user_created: "用户创建",
+    user_modified: "用户修改",
+    unknown: "未知",
+  };
+  return map[b] ?? b;
+}
+
+/** 来源确认动作 → 中文标签。 */
+export function sourceActionLabel(a: string): string {
+  const map: Record<string, string> = {
+    confirm: "确认",
+    correct: "修正",
+    revoke: "撤销",
+  };
+  return map[a] ?? a;
+}
+
+/** 文件事件类型 → 中文标签（M3-A 子集；M3-B 起的词原样返回）。 */
+export function eventKindLabel(k: string): string {
+  const map: Record<string, string> = {
+    source_confirmed: "来源确认",
+    source_corrected: "来源修正",
+    file_id_reuse_suspected: "身份重用嫌疑（待确认）",
+  };
+  return map[k] ?? k;
+}

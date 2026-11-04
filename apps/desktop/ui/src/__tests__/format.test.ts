@@ -1,6 +1,14 @@
 /** 前端纯函数测试（vitest 真实执行）。 */
 import { describe, expect, it } from "vitest";
-import { formatBytes, isPageId, pageFromHash, PAGE_IDS } from "../lib/format";
+import {
+  eventKindLabel,
+  formatBytes,
+  isPageId,
+  pageFromHash,
+  PAGE_IDS,
+  sourceActionLabel,
+  sourceBehaviorLabel,
+} from "../lib/format";
 
 describe("formatBytes", () => {
   it("各量级正确", () => {
@@ -28,5 +36,26 @@ describe("hash 路由", () => {
     expect(pageFromHash("")).toBe("overview");
     expect(isPageId("tools")).toBe(true);
     expect(isPageId("tools2")).toBe(false);
+  });
+});
+
+describe("M3-A 来源语义标签", () => {
+  it("来源行为映射完整且未知值原样返回", () => {
+    expect(sourceBehaviorLabel("ai_created")).toBe("AI 创建");
+    expect(sourceBehaviorLabel("ai_modified")).toBe("AI 修改");
+    expect(sourceBehaviorLabel("ai_downloaded")).toBe("AI 下载");
+    expect(sourceBehaviorLabel("user_created")).toBe("用户创建");
+    expect(sourceBehaviorLabel("user_modified")).toBe("用户修改");
+    expect(sourceBehaviorLabel("unknown")).toBe("未知");
+    expect(sourceBehaviorLabel("ai_maybe")).toBe("ai_maybe");
+  });
+  it("确认动作与事件类型映射", () => {
+    expect(sourceActionLabel("confirm")).toBe("确认");
+    expect(sourceActionLabel("correct")).toBe("修正");
+    expect(sourceActionLabel("revoke")).toBe("撤销");
+    expect(eventKindLabel("source_confirmed")).toBe("来源确认");
+    expect(eventKindLabel("source_corrected")).toBe("来源修正");
+    expect(eventKindLabel("file_id_reuse_suspected")).toBe("身份重用嫌疑（待确认）");
+    expect(eventKindLabel("file_discovered")).toBe("file_discovered");
   });
 });

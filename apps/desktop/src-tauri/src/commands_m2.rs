@@ -13,6 +13,8 @@ const DB_NOT_READY: &str = "数据库未就绪";
 /// 工具详情中的单条路径。
 #[derive(serde::Serialize)]
 pub struct ToolPath {
+    /// paths 节点 id（M3-A 来源确认以此定位文件实体）
+    pub path_id: i64,
     pub full_path: String,
     pub is_dir: bool,
     pub size: i64,
@@ -94,6 +96,7 @@ pub fn get_tool_detail(
     for (id, _name, is_dir, size, conf) in db.tool_top_paths(scan_db_id, tool_id, 30)? {
         let full_path = db.build_full_path(id)?;
         full.push(ToolPath {
+            path_id: id,
             full_path,
             is_dir,
             size,

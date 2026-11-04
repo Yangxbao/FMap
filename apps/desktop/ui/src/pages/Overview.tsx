@@ -1,7 +1,18 @@
-/** 首页总览：真实系统状态 + 磁盘列表 + 真实扫描控制（M1） + 明确标记的未实现区块。 */
-import { useEffect, useRef, useState } from "react";
+/** 首页总览：真实系统状态 + 磁盘列表 + 真实扫描控制（M1）+ 文件身份采集（M3-A）
+ *  + 明确标记的未实现区块。 */
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, DevPlaceholder } from "../components/EmptyState";
-import { api, IpcError, type DbStats, type ScanProgress, type SystemStatus, type VolumeInfo } from "../lib/ipc";
+import {
+  api,
+  IpcError,
+  type BackfillProgress,
+  type DbStats,
+  type IdentitySettings,
+  type IdentityVolume,
+  type ScanProgress,
+  type SystemStatus,
+  type VolumeInfo,
+} from "../lib/ipc";
 import { formatBytes } from "../lib/format";
 
 const SCAN_STATUS_LABEL: Record<string, string> = {
@@ -84,6 +95,130 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
   );
 }
 
+const BACKFILL_STATUS_LABEL: Record<string, string> = {
+  idle: "未运行", running: "采集中", completed: "已完成", cancelled: "已取消", failed: "失败",
+};
+const BACKFILL_TERMINAL = new Set(["completed", "cancelled", "failed"]);
+
+/** 文件身份采集卡（M3-A）：仅已授权后可用；默认关闭（授权入口在设置页）。 */
+function IdentityBackfillCard(props: { connected: boolean }) {
+  const [settings, setSettings] = useState<IdentitySettings | null>(null);
+  const [volumes, setVolumes] = useState<IdentityVolume[] | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [progress, setProgress] = useState<BackfillProgress | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
+
+  const load = useCallback(() => {
+    api.getIdentitySettings().then(setSettings).catch(() => setSettings(null));
+    api.listIdentityVolumes().then((v) => {
+      setVolumes(v);
+      setSelected((s) => s ?? v.find((x) => x.identity_supported)?.root ?? null);
+    }).catch(() => setVolumes(null));
+  }, []);
+
+  useEffect(() => {
+    if (props.connected) load();
+  }, [props.connected, load]);
+
+  const running = progress?.status === "running";
+  const enabled = settings?.enabled ?? false;
+
+  // 轮询采集进度（运行中每 1.5s；结束后停止并刷新卷实体计数）
+  useEffect(() => {
+    if (!running) return;
+    pollRef.current = window.setInterval(() => {
+      api.identityBackfillStatus().then((p) => {
+        setProgress(p);
+        if (BACKFILL_TERMINAL.has(p.status) && pollRef.current) {
+          clearInterval(pollRef.current);
+          pollRef.current = null;
+          load();
+        }
+      }).catch(() => {});
+    }, 1500);
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [running, load]);
+
+  if (!props.connected) {
+    return (
+      <DevPlaceholder
+        feature="文件身份采集"
+        milestone="M3-A（后端已实现）"
+        note="通过 Tauri 启动并在设置页授权后，可在此对已扫描磁盘运行身份采集（卷 GUID + NTFS FileId，只读元数据）。"
+      />
+    );
+  }
+
+  const start = async () => {
+    if (!selected) return;
+    setErr(null);
+    try {
+      setProgress(await api.identityBackfillStart(selected));
+    } catch (e) { setErr(e instanceof IpcError ? e.message : String(e)); }
+  };
+  const cancel = async () => { await api.identityBackfillCancel().catch(() => {}); };
+
+  return (
+    <Card title="文件身份采集（M3-A · 只读元数据）">
+      {!enabled ? (
+        <div className="text-[12.5px] leading-relaxed text-[#9aa0a6]">
+          身份采集<b>默认关闭</b>。请先在
+          <a className="mx-1 text-[#4cc2ff] underline" href="#/settings">设置页</a>
+          授权「文件身份采集」（卷 GUID + NTFS FileId；不读正文、不算哈希、不上传）。
+        </div>
+      ) : (
+        <>
+          <div className="mb-2.5 flex flex-wrap gap-2">
+            {(volumes ?? []).map((v) => (
+              <label key={v.volume_id} className="flex cursor-pointer items-center gap-1.5 rounded border border-[#35373c] px-2 py-1 text-[12px]">
+                <input type="checkbox" checked={selected === v.root} onChange={() => setSelected(v.root)} disabled={running} />
+                <b>{v.root}</b>
+                <span className="text-[#6b7075]">{v.fs_type ?? "?"}{v.identity_supported ? "" : "（弱身份）"}</span>
+                <span className="text-[#6b7075]">实体 {v.entity_count}</span>
+              </label>
+            ))}
+            {(volumes ?? []).length === 0 && <span className="text-[12px] text-[#6b7075]">尚无已登记磁盘——请先执行一次扫描。</span>}
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button className="rounded bg-[#4cc2ff] px-3.5 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-40"
+              disabled={running || !selected} onClick={start}>{running ? "采集中…" : "开始身份采集"}</button>
+            {running && <button className="rounded border border-[#f26d6d] px-3 py-1.5 text-[12.5px] text-[#f26d6d]" onClick={cancel}>取消</button>}
+          </div>
+          {err && <div className="mt-2 text-[12px] text-[#f26d6d]">{err}</div>}
+          {progress && (
+            <div className="mt-3 space-y-1 text-[12.5px]">
+              <div>状态：<b className={progress.status === "completed" ? "text-[#6ccb5f]" : progress.status === "failed" ? "text-[#f26d6d]" : ""}>
+                {BACKFILL_STATUS_LABEL[progress.status] ?? progress.status}</b>
+                {progress.volume_root ? `（${progress.volume_root}）` : ""}
+              </div>
+              <div className="text-[#9aa0a6]">
+                条目 {progress.entries} · 新建实体 {progress.entities_new} · 更新 {progress.entities_updated}
+                {progress.weak_identity > 0 && <> · 弱身份 {progress.weak_identity}</>}
+                {progress.reuse_suspected > 0 && <> · <span className="text-[#f2c744]">重用嫌疑 {progress.reuse_suspected}</span></>}
+                {progress.unmapped > 0 && <> · 未对齐 {progress.unmapped}</>}
+                {progress.denied > 0 && <> · 无权/跳过 {progress.denied}</>}
+              </div>
+              {running && progress.current_dir && (
+                <div className="truncate font-mono text-[11px] text-[#6b7075]">{progress.current_dir}</div>
+              )}
+              {progress.error && <div className="text-[12px] text-[#f26d6d]">{progress.error}</div>}
+              {progress.status === "completed" && (
+                <div className="text-[11.5px] text-[#6b7075]">
+                  完成后可在「AI 工具」页对已归属路径进行来源确认（事件时间线 + 证据）。
+                </div>
+              )}
+            </div>
+          )}
+          <div className="mt-2.5 text-[11px] text-[#6b7075]">
+            只读元数据采集：与扫描同句柄批量取得 NTFS FileId；不读正文、不计算哈希、不上传。
+          </div>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function Row(props: { k: string; v: React.ReactNode; ok?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-[#35373c] py-1.5 text-[12.5px] last:border-0">
@@ -103,15 +238,21 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
 
   const connected = props.status !== null;
 
-  // 后端在线时拉取真实数据；失败时把错误如实展示（不伪造）
+  // 后端在线时拉取真实数据；失败时把错误如实展示（不伪造）。
+  // 统计卡每 10s 自动刷新（交接遗留 #2：不再是一次性快照）。
   useEffect(() => {
     if (!connected) return;
+    const refresh = () => {
+      api.getDbStats().then(setDbStats).catch((e: unknown) => {
+        setDbStatsError(e instanceof IpcError ? e.message : String(e));
+      });
+    };
     api.listVolumes().then(setVolumes).catch((e: unknown) => {
       setVolumesError(e instanceof IpcError ? e.message : String(e));
     });
-    api.getDbStats().then(setDbStats).catch((e: unknown) => {
-      setDbStatsError(e instanceof IpcError ? e.message : String(e));
-    });
+    refresh();
+    const timer = window.setInterval(refresh, 10_000);
+    return () => clearInterval(timer);
   }, [connected]);
 
   const s = props.status;
@@ -192,6 +333,9 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
 
       <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">磁盘扫描</h2>
       <ScanCard connected={connected} volumes={volumes} />
+
+      <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">文件身份采集</h2>
+      <IdentityBackfillCard connected={connected} />
 
       <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">扫描记录</h2>
       {!connected ? (

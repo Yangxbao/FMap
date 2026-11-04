@@ -100,6 +100,103 @@ export interface ScanProgress {
   error: string | null;
 }
 
+// ---------- M3-A：文件身份采集与来源确认 ----------
+
+export interface SourceOverview {
+  collection_enabled: boolean;
+  entities: number;
+  with_file_id: number;
+  weak_identity: number;
+  confirmed_entities: number;
+  candidates: number;
+  events: number;
+}
+
+export interface IdentitySettings {
+  enabled: boolean;
+  overview: SourceOverview;
+}
+
+export interface RevokeStats {
+  deleted_data: boolean;
+  entities: number;
+  events: number;
+  evidence: number;
+  candidates: number;
+  confirmations: number;
+}
+
+export interface IdentityVolume {
+  volume_id: number;
+  root: string;
+  fs_type: string | null;
+  /** NTFS = FileId 主身份可用；其他卷走弱身份（仍可采集） */
+  identity_supported: boolean;
+  entity_count: number;
+  volume_guid: string | null;
+}
+
+export interface BackfillProgress {
+  /** idle|running|completed|cancelled|failed */
+  status: string;
+  volume_root: string | null;
+  entries: number;
+  entities_new: number;
+  entities_updated: number;
+  reuse_suspected: number;
+  weak_identity: number;
+  unmapped: number;
+  denied: number;
+  current_dir: string;
+  error: string | null;
+}
+
+/** 来源行为（用户确认词表；unknown 为合法且永久保留的状态）。 */
+export type SourceBehavior =
+  | "ai_created"
+  | "ai_modified"
+  | "ai_downloaded"
+  | "user_created"
+  | "user_modified"
+  | "unknown";
+
+export interface EffectiveSource {
+  behavior: SourceBehavior;
+  action: string;
+  created_at: number;
+}
+
+export interface ConfirmationRow {
+  id: number;
+  action: string;
+  behavior: SourceBehavior;
+  note: string | null;
+  created_at: number;
+}
+
+export interface EventRow {
+  id: number;
+  ts: number;
+  kind: string;
+  detail: string | null;
+  evidence_id: number | null;
+}
+
+export interface PathSourceDetail {
+  path_id: number;
+  entity: {
+    id: number;
+    identity_kind: string;
+    /** 16 进制 FileId（file_id 身份时非空） */
+    file_id: string | null;
+    first_seen_at: number;
+    last_seen_at: number;
+  } | null;
+  effective: EffectiveSource | null;
+  confirmations: ConfirmationRow[];
+  events: EventRow[];
+}
+
 /** 后端命令的唯一访问点（新增命令在此补充）。 */
 export const api = {
   getAppInfo: () => invoke<AppInfo>("get_app_info"),
@@ -114,4 +211,21 @@ export const api = {
     invoke<boolean>("set_rule_enabled", { ruleId, enabled }),
   scanStatus: (scanId: number) => invoke<ScanProgress>("scan_status", { scanId }),
   scanCancel: (scanId: number) => invoke<boolean>("scan_cancel", { scanId }),
+  // M3-A
+  getIdentitySettings: () => invoke<IdentitySettings>("get_identity_settings"),
+  setIdentityCollection: (enabled: boolean) =>
+    invoke<boolean>("set_identity_collection", { enabled }),
+  revokeIdentityCollection: (deleteData: boolean) =>
+    invoke<RevokeStats>("revoke_identity_collection", { deleteData }),
+  listIdentityVolumes: () => invoke<IdentityVolume[]>("list_identity_volumes"),
+  identityBackfillStart: (root: string) =>
+    invoke<BackfillProgress>("identity_backfill_start", { root }),
+  identityBackfillStatus: () => invoke<BackfillProgress>("identity_backfill_status"),
+  identityBackfillCancel: () => invoke<boolean>("identity_backfill_cancel"),
+  getPathSourceDetail: (pathId: number) =>
+    invoke<PathSourceDetail>("get_path_source_detail", { pathId }),
+  confirmSource: (pathId: number, behavior: SourceBehavior, note: string | null) =>
+    invoke<EffectiveSource>("confirm_source", { pathId, behavior, note }),
+  revokeSource: (pathId: number, note: string | null) =>
+    invoke<EffectiveSource>("revoke_source", { pathId, note }),
 };
