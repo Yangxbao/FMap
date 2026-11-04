@@ -86,7 +86,9 @@ fn main() {
             println!("  {key}: 规则未加载");
             continue;
         };
-        let paths = db.tool_top_paths(scan_db_id, tool_id, 8).unwrap_or_default();
+        let paths = db
+            .tool_top_paths(scan_db_id, tool_id, 8)
+            .unwrap_or_default();
         println!("  == {name} (key={key}) ==");
         if paths.is_empty() {
             println!("    （本扫描代未发现该工具痕迹——不代表未安装，可能是扫描范围未覆盖）");
@@ -94,15 +96,20 @@ fn main() {
         }
         for (id, _name, is_dir, size, conf) in paths {
             let full = db.build_full_path(id).unwrap_or_default();
-            println!("    [{conf}] {}{} ({})", if is_dir { "<DIR> " } else { "" }, full, {
-                if size >= 1073741824 {
-                    format!("{:.1} GB", size as f64 / 1073741824.0)
-                } else if size >= 1048576 {
-                    format!("{:.1} MB", size as f64 / 1048576.0)
-                } else {
-                    format!("{size} B")
+            println!(
+                "    [{conf}] {}{} ({})",
+                if is_dir { "<DIR> " } else { "" },
+                full,
+                {
+                    if size >= 1073741824 {
+                        format!("{:.1} GB", size as f64 / 1073741824.0)
+                    } else if size >= 1048576 {
+                        format!("{:.1} MB", size as f64 / 1048576.0)
+                    } else {
+                        format!("{size} B")
+                    }
                 }
-            });
+            );
         }
     }
 }

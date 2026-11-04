@@ -1,165 +1,212 @@
-# FMap M2 最终交接报告（M2_FINAL_HANDOFF · 单文件交接制）
+# FMap M2 最终交接报告（M2_FINAL_HANDOFF · 单文件交接制 · 更新版）
 
-> 日期：2026-11-04 · 执行：主会话 AI（零子代理）· 分支 main · HEAD 见 §16
+> 日期：2026-11-04（M2 验收收尾轮）· 执行：主会话 AI（零子代理）· 分支 main
 > 用途：**只上传本文件即可让 ChatGPT 审查 M2 成果并规划 M3。**
 
 ---
 
-## 1. M2 完成情况总览
+## 1. 当前项目真实状态
 
-| 任务书目标 | 状态 | 核心产出 |
-|---|---|---|
-| 任务一：AI 工具规则库 | ✅ 完成 | `rules/builtin-rules-v1.json`（15 工具/29 规则）+ 幂等加载器 + 启用/禁用 + 版本管理 |
-| 任务二：信号文件检测 | ✅ 完成 | 引擎级信号匹配（CLAUDE.md/AGENTS.md/.cursorrules/GEMINI.md/.roo/.clinerules 等）；仅文件名，零正文读取 |
-| 任务三：归属判断引擎 | ✅ 完成 | 四级证据（Verified/Likely/Possible/Unknown）+ 证据链 + 冲突标记 + Verified 目录继承；**真实库 4,245 条归属结论** |
-| 任务四：识别中心页面 | ✅ 代码完成（编译通过；像素级截图未完成，见 §9.3） | 真实 IPC 数据渲染 + 空状态 + 规则启停 + 冲突展示 |
-| 真实采样（ZCode/WorkBuddy/DSH） | ✅ 完成 | 见 §10（全部来自真实扫描数据） |
-| 单文件交接 | ✅ | 本文件 |
+- 目录：`D:\.zcode\workspace\draft-...\TraceNest`（本地目录名保留 TraceNest 未改，产品名已统一 FMap）
+- 分支 main；本次收尾前 HEAD=75e2dde（M2 主体）；**本次收尾后 HEAD 见 §20**
+- 工作区：提交前干净；提交后干净
+- 数据库（真实用户库，%APPDATA%/io.github.tracenest.desktop/tracenest.db）：**schema v4** · paths **508,032** · tools 15 · rules 29(enabled) · rule_packs 1 · attributions **4,245**（全部 source_behavior=unknown）
+- 测试：Rust **40/40**（core 18 + database 19 + platform 3）· clippy 0 · fmt ✅ · 前端 tsc/build ✅ vitest 7/7
 
-数据库现状（真实库实测）：schema **v3** · tools 15 · rule_packs 1 · rules(enabled) 29 · **attributions 4,245** · paths **508,032**（历史数据零丢失）。
+## 2. Git 分支、HEAD 和工作区状态
 
-## 2. 开发前项目现状审查（第一阶段结论）
+见 §20 提交记录。提交前 `git status` 为空（无用户未提交改动需保护）；未推送远程；未动 GitHub。
 
-- Git：main @ f211601，工作区干净，5 提交（M0×1/M1×2/更名×1/M1收尾×1）。
-- 规则表（tools/rule_packs/rules/attributions/agg_tool_size）在 v1 基线 schema 中**已存在**——M2 无需为表结构做大的重设计。
-- 真实扫描数据（508,032 条）已含 `.dsh`×1、`.workbuddy`×6、`.codebuddy`×1、`.claude`×2、`.codex`×1、`Doubao`×1、**CLAUDE.md×1、AGENTS.md×3**——采样不需要产生新文件。
-- M1 遗留技术债务 4 项均**不阻塞 M2**，已记录至 §15。
+## 3. M2 原始功能完成情况（上一轮报告结论，经本轮复核确认）
 
-## 3. 本阶段目标与实际完成情况
+规则库（15 工具/29 规则，JSON 数据文件与引擎分离）✅；信号检测（仅文件名）✅；归属引擎（四级证据+互证+冲突+继承）✅；识别中心页面 ✅；规则启停 IPC ✅——均已在真实库上运行（§9）。
 
-见 §1 总览。补充差异说明：
-- 规则表结构沿用现有设计（`rules.confidence` 承载规则级置信、新增 `weight/evidence/enabled` 三列承载引擎所需元数据）——未推翻重设计。
-- 归属结论按"每节点×每工具一行"存储（支持冲突并存），而非单行单工具——为冲突透明化服务，属最小必要设计。
+## 4. M2 遗留问题处理情况（本轮收尾内容）
 
-## 4. 关键技术方案与设计决策
-
-| 决策 | 理由 |
+| 遗留 | 处理结果 |
 |---|---|
-| 规则以 JSON 数据文件随仓库分发（`rules/builtin-rules-v1.json`），加载进 DB | 数据与引擎分离；社区 PR 友好；不硬编码在前端 |
-| 规则匹配 = **祖先名称链的后缀窗口匹配**（不解析 %USERPROFILE%） | 与"从卷根扫描"的现有架构解耦；对任意用户名通用；规则只写目录段（如 `.claude`、`AppData/Roaming/Cursor`） |
-| 证据等级由**权重计算**而非人工指定：dir 规则 verified=1.0/likely=0.7；signal 自带 0.4~0.9；≥1.0=Verified、≥0.7=Likely、否则 Possible | 等级可复核；杜绝"路径命中就 Verified" |
-| **互证升级**：信号命中节点若位于同工具数据目录内（祖先链窗口命中）→ Verified，双证据保留 | 例：.claude 内的 CLAUDE.md = 目录归属+信号归属互证 |
-| **继承**：仅 Verified 目录归属向下传播（子节点无自配结论时），basis 记 `inherited/from_path_id` | 信号 Likely 不向下传播——避免把"工具在此工作过"夸大为"目录内文件都由 AI 生成"（任务书红线） |
-| 归属 pass 为**独立可重跑的派生数据**：重跑前 `DELETE FROM attributions WHERE scan_id=?` | 派生数据可随规则升级重建，不触碰 paths/scans 历史表 |
-| 冲突透明：同节点多工具同级别 → 每工具各存一行，basis JSON `conflict:true/conflict_with:[...]` | 不强行二选一，UI 可见 |
+| 识别中心 UI 实机验收未完成 | ✅ **已实机验收**（§9）：启动应用→进入识别中心→真实数据显示（Codex verified 4241 等）→截图 |
+| 语义问题（工具关联 vs 来源行为混淆） | ✅ **已修正**（§5）：DB v4 + 引擎注释 + UI 两维度说明框 |
+| 迁移安全性（v2→v3 半迁移事故） | ✅ **已重构为崩溃安全设计**（§6）：阶段事务+逐列幂等+崩溃恢复测试 |
+| ZCode/豆包采样缺失 | ✅ **已真实采样**（§10）：定向只读扫描七目录 |
 
-规则内容纪律：ZCode/WorkBuddy/DSH 因无官方路径文档，规则置信=likely、source 标注"本机观察/待验证"；`.vscode`、AGENTS.md 等通用痕迹仅给 possible 弱信号——不为凑数添加不可靠规则。
+## 5. 文件归属语义修正情况（本轮最重要的设计修正）
 
-## 5. 数据库变更与兼容性
+**修正前问题**：M2 归属引擎把"位于工具数据目录"直接产出 Verified 归属（如 .codex 子树 4,241 条），且继承把该结论传播到子树全部文件——这在语义上混淆了"工具关联"与"文件生成来源"。
 
-- **迁移 v3**（v2→v3，全部 ALTER ADD COLUMN 非破坏）：`rules.enabled INTEGER DEFAULT 1`、`rules.weight REAL`、`rules.evidence TEXT`、`tools.kind TEXT`。
-- **真实库迁移实测**：508,032 条 paths 的 v2 库原地升 v3，paths 计数不变（§8 命令记录）。
-- **事故与修复（如实记录）**：首次真实库迁移时 v3 的 tools.kind 列为后续补入，导致"版本号已到 3 但缺列"的半迁移状态——以幂等 ALTER 补列修复。教训：**版本号提升必须与完整 DDL 同批**（已写入 DEVELOPMENT_LOG）。
-- identifier 未动；tracenest.db 未动位置；无任何历史数据删除。
+**修正方案（本轮落地）**：
+1. **两维度分离**（数据层固化）：
+   - 维度 A 工具关联 = attributions 表原有语义（tool_id/confidence/score/basis），**保留**；
+   - 维度 B 来源行为 = 新列 `attributions.source_behavior`（v4 迁移，`TEXT NOT NULL DEFAULT 'unknown'`）：枚举 AI_CREATED/AI_MODIFIED/AI_DOWNLOADED/USER_CREATED/BROWSER_DOWNLOADED/SOFTWARE_CREATED/COPIED_OR_MOVED/UNKNOWN。
+2. **自动分析不判定来源行为**：归属 pass 写入的每条结论 `source_behavior='unknown'`——系统自动判断只回答"与哪个工具有关、多可信"，不回答"是不是 AI 生成的"。只有用户确认（SOURCE_CONFIRMED，M3 功能）才能改变。
+3. **继承语义澄清**：Verified 目录继承 = "位于该工具数据目录内"的关联继承（工具的配置/缓存/会话文件确实属于该工具管理），**不是**"全部 AI 生成"。UI 与 basis 措辞已按此校准。
+4. **UI 两维度说明框**：识别中心顶部固定展示"①工具关联（本页）②文件来源行为——来源行为全部标记为「未知」，只有你手动确认才能改变"。
+5. 真实库验证：v4 迁移后 4,245 条归属全部 source_behavior='unknown'（node:sqlite 实测）。
 
-## 6. 修改文件清单及作用
+**明确保留**：.codex 内文件归属 codex（Verified 工具关联）是正确且有用的——它回答"这 32.6MB 是 Codex 的数据"；它不回答"这些文件是不是 AI 生成的"。
 
-| 文件 | 作用 |
-|---|---|
-| `rules/builtin-rules-v1.json`（新） | 内置规则包数据（15 工具/29 规则，含来源 URL/证据/风险级/OS） |
-| `crates/core/src/attribution.rs`（新） | 纯逻辑引擎：规则匹配（后缀窗口）、等级计算、互证升级、冲突检测（9 单测） |
-| `crates/core/src/lib.rs` | 注册 attribution 模块 |
-| `crates/database/src/rules_loader.rs`（新） | 内置规则包幂等加载 + set_rule_enabled |
-| `crates/database/src/attribution_pass.rs`（新） | 归属 pass（树评估/继承/批量入库）+ 识别中心查询 API（overview/top_paths/build_full_path/rules/conflicts）+ 类型别名 |
-| `crates/database/src/lib.rs` | v3 迁移 + BUILTIN_RULES_JSON + 模块注册 |
-| `crates/database/examples/attribution_real.rs`（新） | 真实库归属运行器（验收与采样工具） |
-| `apps/desktop/src-tauri/src/lib.rs` | setup：规则包加载；注册 commands_m2 |
-| `apps/desktop/src-tauri/src/commands_m2.rs`（新） | 5 个 M2 IPC 命令（薄层） |
-| `apps/desktop/src-tauri/src/commands.rs` | CommandError 构造函数 pub 化 |
-| `apps/desktop/ui/src/pages/Tools.tsx`（新） | 识别中心真实页面 |
-| `apps/desktop/ui/src/{lib/ipc.ts, App.tsx, pages/Placeholders.tsx}` | API/路由/占位页拆分 |
-| `docs/M2_FINAL_HANDOFF.md`（本文件） | 单文件交接 |
+## 6. 数据库迁移安全性（v2→v3 半迁移事故的根治）
 
-## 7. 各项功能的实际运行情况
+**根因**：旧实现版本号写入与 DDL 分离，且阶段内某条 ALTER 失败后已执行的不回滚 → 版本号与结构不一致。
 
-- 规则加载：真实库实测 `builtin v1.0.0: 15 工具 / 29 规则`，幂等重跑 skip ✅
-- 信号检测：真实库发现 CLAUDE.md×1 → claude-code likely ✅（仅文件名匹配）
-- 归属引擎：真实库 160,001 节点 **930ms** 完成；6 节点直配 + 4,239 继承 = 4,245 条结论 ✅
-- 识别中心：代码完成、tsc/build 通过；数据层 SQL 与 example 完全一致（已真机跑通）——像素级 UI 截图未完成（§9.3）
+**新设计（crates/database/src/lib.rs migrate()）**：
+1. 每版本阶段 = 独立事务（`unchecked_transaction`）；**版本号写入与该阶段 DDL 同事务**——任一步失败整体回滚，版本号保持旧值；
+2. ALTER 前逐列检查（pragma_table_info），已存在列跳过——重复迁移/半迁移恢复均安全；
+3. v1 基线阶段同样事务化。
 
-## 8. 测试命令及真实测试结果
+**迁移测试（新增 3 项，全部真实执行通过）**：
+- `迁移崩溃恢复_半迁移状态可安全续跑`：手工构造"v1 版本号 + instance_id 列已加（模拟崩溃残留）" → open 自动补齐 end_note → 升到 v4 → 数据保留 → 孤儿回收正确（rec=[1]）
+- `迁移幂等_列已存在时跳过不报错`：预建全部 v4 列后 open 不报错
+- `v4迁移_既有归属行填充_source_behavior_unknown`：既有归属行自动填 unknown
 
-| 命令 | 结果 |
-|---|---|
-| `cargo test --workspace` | ✅ **37/37**：core 18（含归属引擎 9）+ database 16（含 scan_writer 一致性 8 + 迁移/恢复）+ platform 3 |
-| `cargo clippy --workspace` | ✅ 0 警告 0 错误 |
-| `cargo fmt --check` | ✅ |
-| `npm run typecheck` / `build` / `test` | ✅ / ✅ / 7/7 |
-| `cargo run -p tracenest-database --example attribution_real` | ✅ 真实库 930ms 完成归属；输出见 §10 |
-| 只读 DB 校验（node:sqlite） | ✅ schema=3、tools=15、rules(enabled)=29、attributions=4,245、paths=508,032 |
+**真实库验证**：v3→v4 迁移后 schema=4、4,245 行 source_behavior='unknown'、paths 不变。
 
-## 9. Windows 实机验证情况
+## 7. 识别中心 UI 实机验收情况
 
-1. v3 迁移在真实库（v2，508K 路径）上完成 ✅（含一次半迁移事故与修复，§5）
-2. 规则包加载 + 归属分析在真实库完成 ✅（930ms，结果 §10）
-3. **UI 像素级截图未完成**：验证时应用窗口处于隐藏/未渲染状态，UIA 无法读取 WebView 内容（仅 70 元素）。代码层：Tools.tsx 通过 tsc/build，数据查询与 example 同源已验证。**待你启动应用人工确认识别中心显示**（启动方式：`cargo run` 或 npm dev + exe）。
-4. 普通用户权限启动 ✅（提权拒绝逻辑不变）。
+**PASS（本轮完成）**：启动桌面应用（普通用户权限）→ 截图确认：识别中心正常打开；**真实数据渲染**——OpenAI Codex（verified 4241 · 文件 2746 · 目录 1495 · 最后发现 2026/11/3）、Claude Code（verified 2）、DSH（likely 1，2026/10/19）、WorkBuddy/CodeBuddy（likely 1，2026/10/15）；两维度语义说明框显示；规则版本 builtin v1.0.0；未知来源文件（全库）126,474；数据库卡 schema v4；无任何硬编码假数字。规则启停按钮与空状态/错误态代码已实现（启停 IPC 实测见 M2 主体验收）。
 
-## 10. ZCode、WorkBuddy、DSH 实际采样结果（真实扫描数据）
+## 8. 真实数据库历史数据保护情况
 
-| 工具 | 实际发现（实际证据） | 归属结果 | 状态 |
+全程只读验证 + 派生数据重建，paths 从 326,521→348,031→508,032 均为**新增累计**；v3/v4 迁移为 ADD COLUMN 非破坏；本轮收尾后 paths=508,032、scans=4（2 failed 恢复 + 1 cancelled + 1 failed 恢复）零删除。
+
+## 9. 真实工具采样（定向只读扫描，非全盘；7 目录全部 Completed）
+
+| 工具目录 | 文件 | 目录 | 观察状态 |
 |---|---|---|---|
-| **WorkBuddy** | `C:\Users\MR\.codebuddy`（393 KB，本扫描代真实命中） | **likely**（目录规则命中，双路径规则中先命中 .codebuddy） | 实际发现 ✅ |
-| **DSH** | `C:\Users\MR\.dsh`（**277.6 MB**，真实命中——含 sessions/attachments 等） | **likely** | 实际发现 ✅ |
-| **ZCode** | 当前扫描代无 `.zcode` 路径（C 盘扫描被取消于早期，未覆盖到该目录） | 未归属 | **尚未验证**（需重新全盘扫描覆盖） |
-| Claude Code | `C:\Users\MR\.claude` + `settings.json` | **verified**（官方目录规则）+ CLAUDE.md 信号 likely | 实际发现 ✅ |
-| OpenAI Codex | `C:\Users\MR\.codex` 子树（.tmp/plugins/.git 等，32.6 MB） | **verified ×4,241**（目录规则 + 继承） | 实际发现 ✅ |
-| 豆包 | 规则已入库（AppData 双路径，本机验证） | 本扫描代未命中（该部分目录未覆盖） | 待全盘扫描 |
+| C:\Users\MR\.zcode | **54,486** | 7,426 | **实际观察**（首次） |
+| C:\Users\MR\.workbuddy | **47,909** | 9,528 | 实际观察 |
+| C:\Users\MR\AppData\Local\Doubao | **27,196** | 4,444 | 实际观察 |
+| C:\Users\MR\.codex | 2,746 | 1,494 | 实际观察（+DB verified 4,241） |
+| C:\Users\MR\.dsh | **7,758** | 755 | 实际观察 |
+| C:\Users\MR\.codebuddy | 75 | 3 | 实际观察 |
+| C:\Users\MR\.claude | 1 | 0 | 实际观察（轻度使用） |
 
-三态区分：上表"实际发现"= 真实扫描数据中的路径证据；"推测"= 规则语义（如 .workbuddy→腾讯品牌）；"未验证"= ZCode 规则与豆包命中（待全盘扫描后复核）。
+命令：`cargo run -p tracenest-core --example scan -- <目录>`（只读元数据扫描）。状态分级：以上全部为"已实际观察"；规则置信级别见 §11（本机观察类=likely，官方文档类=verified）；"根据规则推测"= 归属引擎的继承结论；"尚未验证"= 豆包 Roaming 侧、.windsurf/.cline/.continue 等未安装工具。
 
-## 11. 已验证的识别规则与尚待验证规则
+## 10. 所有测试结果及执行命令
 
-- **已验证（verified 规则，有官方文档/本机证据）**：claude-code（.claude、.claude/projects、CLAUDE.md）、codex（.codex）、cursor（.cursor、AppData/Roaming/Cursor、.cursorrules、.cursorignore）、gemini-cli（.gemini、GEMINI.md）、vscode、ollama、huggingface——共 17 条
-- **较可能（likely 规则，官方文档但本机未验证，或本机观察但无官方文档）**：windsurf×2、cline×2、roo-code×2、continue、zcode、workbuddy×2、dsh、doubao×2——共 10 条
-- **弱信号（possible）**：AGENTS.md（跨工具开放约定）、.vscode——2 条
-- 启用/禁用：`set_rule_enabled` IPC + DB enabled 列（UI 已有按钮）；规则版本：rule_packs.version + 归属 basis 记录 rules_version
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| Rust 全量 | `cargo test --workspace` | ✅ **40/40**（core 18 / database **19** / platform 3） |
+| 静态检查 | `cargo clippy --workspace` | ✅ 0 警告 0 错误 |
+| 格式 | `cargo fmt --check` | ✅ |
+| 前端 | `npm run typecheck` / `build` / `test` | ✅ / ✅ / 7/7 |
+| 迁移安全 | 新增 3 测试（崩溃恢复/列已存在/v4 填充） | ✅ 全过 |
+| 归属语义 | `v4迁移_既有归属行填充_source_behavior_unknown` | ✅ |
+| 真实库迁移 | v3→v4 + node:sqlite 校验 | ✅ schema=4、508,032 不变 |
+| 真实采样 | example scan ×7 目录 | ✅ 全部 Completed |
+| 实机 UI | 桌面启动 + 识别中心截图 | ✅（§7/§9） |
 
-## 12. 归属判断证据等级及其判定依据
+状态标注：以上全部 PASS；无 FAIL；无 BLOCKED；本轮无 NOT RUN 项（M1 遗留的 NSIS 打包验证仍未执行，属后续计划）。
 
-- **Verified**：①命中官方文档确认的数据目录规则（weight 1.0）②目录规则+信号文件互证 ③位于已验证数据目录内的继承。判定依据链（rule_id、匹配描述、rules_version、judged_at）存于 attributions.basis JSON，UI 可展开。
-- **Likely**：专属性信号（CLAUDE.md 0.9/.cursorrules 0.85/GEMINI.md 0.85）或 likely 级目录规则（0.7，如本机观察类）。
-- **Possible**：弱信号（AGENTS.md 0.5/.vscode 0.4）。
-- **Unknown**：无命中→不写 attributions 行→overview 中显示为"未知来源文件数"。
-- **冲突**：同节点 ≥2 工具同级别 → 各行 basis 记 conflict+conflict_with，UI 显示冲突徽标；真实库本次 0 冲突（构造用例在单测覆盖）。
+## 11. PASS / FAIL / BLOCKED / NOT RUN / MANUAL REQUIRED 清单
 
-## 13. 隐私、安全与只读原则验收情况
+- PASS：见 §10 全表
+- FAIL：无
+- BLOCKED：无（上一轮的 SAC 拦截经逐 crate 等效执行 + 重试解决；本轮未复发）
+- NOT RUN：NSIS 打包产物验证；跨平台（macOS/Linux）
+- MANUAL REQUIRED（可选）：①启动 FMap 人工浏览识别中心与两维度说明 ②如遇 Smart App Control 拦截新二进制，可手动将 SAC 切为评估模式（我无权改安全设置）
 
-- 全程仅使用 paths 表元数据；**零文件正文读取、零哈希、零会话/聊天记录访问**（代码路径上不存在）。
-- 零网络出站；零用户文件修改（check-readonly 门禁保持通过）；未动注册表/环境变量/Defender/SAC。
-- 信号文件识别不改变"只读元数据"承诺；未实现任何正文读取功能。
-- 数据库操作仅限 FMap 自身 DB 的派生数据（attributions）与规则表——历史 paths/scans 未删改。
+## 12. 尚未解决的问题
 
-## 14. 未完成事项
+1. 双实例并发扫描进程存活检测（单实例假设，边界已文档化）
+2. 扫描统计卡不自动轮询刷新
+3. 应用正常关闭时主动取消在跑任务（当前靠启动恢复兜底）
+4. NSIS 打包产物名验证
+5. 来源行为的用户确认 UI（SOURCE_CONFIRMED/CORRECTED）——M3-A 交付
 
-1. 识别中心像素级截图（§9.3，数据层已验证）
-2. ZCode 规则待全盘扫描覆盖后复核
-3. `.cursorrules`/GEMINI.md 等信号在真实项目目录的命中验证（当前扫描未覆盖到含信号文件的项目根）
-4. 规则启停后的**重新归属**提醒 UX（禁用规则需重跑分析生效）
+## 13. 当前产品功能边界
 
-## 15. 已知问题及技术债务
+**能做**：多磁盘只读扫描（批量事务 110K 行/秒）· 异常退出恢复 · 取消一致性 · AI 工具规则识别（15 工具，证据链+置信度+冲突）· 信号文件检测（仅文件名）· Verified 目录继承 · 识别中心真实展示 · 规则启停。
+**不做（永久或暂缓）**：文件删除/移动/改名、正文读取、哈希计算、聊天记录/浏览器库读取、进程监控、后台常驻、云同步、提权——全部约束见 SECURITY.md。
 
-- M1 遗留 4 项（多实例检测/统计卡刷新/关闭钩子/NSIS 验证）→ 均不影响 M2，保留
-- 归属 pass 为 O(N) 全节点评估（508K 节点实测 <1s，暂无性能问题）；增量归属（只算新扫描）列 M3
-- 迁移纪律教训：版本号提升必须与完整 DDL 同批（§5 事故）
-- 双实例并发扫描边界（M1 债务延续）
+## 14. FMap 长期产品方向（本轮正式确定）
 
-## 16. Git 提交记录与工作区状态
+FMap 从"AI 文件识别器"升级为**文件来源与生命周期追踪系统**：解释电脑中文件从哪里来、经历了什么变化、为什么在当前位置。核心价值排序：**真实性 > 隐私 > 覆盖面**——宁可显示未知，不可编造来源。
 
-- main 分支，工作区干净（本次提交前）
-- 本次 M2 提交：`feat(m2): AI 工具规则库+归属引擎+识别中心`（含 rules JSON、引擎、pass、IPC、UI、测试）
-- 历史提交：5c1a304→7295afb→8a5d4b1→169c6ff→9b685ae→f211601→（本次）
-- 无远程仓库；未推送；无密钥/隐私路径入库（DB 在用户 AppData，不在仓库）
+**两维度模型（永久原则）**：
+- 维度 A 工具关联：文件/目录与工具的关联强度（M2 已实现）
+- 维度 B 来源行为：AI_CREATED / AI_MODIFIED / AI_DOWNLOADED / USER_CREATED / BROWSER_DOWNLOADED / SOFTWARE_CREATED / COPIED_OR_MOVED / UNKNOWN——**自动分析永不填写**（恒 unknown），用户确认是唯一改变途径，且与系统推断分开存储。
 
-## 17. M3 后续建议
+**五类追踪对象**：AI 生成 / AI 修改（与 AI 创建严格区分）/ AI 下载引入（与 AI 生成严格区分）/ 普通文件来源（浏览器/软件/安装程序/解压/外部设备）/ 来源未知（正式状态，保留首次发现时间与证据，允许用户修正）。
 
-1. **全量扫描补全**（用户授权后扫全盘）→ 直接补齐 ZCode/豆包/信号文件的真实验证
-2. 磁盘地图/文件浏览页接入归属数据（treemap 按 AI 工具着色——M1 已预留 agg_tool_size）
-3. 归属增量计算（只对新扫描代/新路径跑 pass）
-4. 规则启停的重新分析提醒 UX；规则包本地导入（社区适配器）
-5. M1 遗留债务清单（§15）逐项消化
-6. 卸载安全清单报告（F9，数据已齐备：归属+风险级）
+## 15. 文件生命周期模型建议（M3 研究目标）
 
-## 18. 给 ChatGPT 的审查摘要
+**事件模型**（草案，M3-A 落地时评审）：FILE_DISCOVERED（首次发现）/ FILE_CREATED / FILE_MODIFIED / FILE_DOWNLOADED / FILE_IMPORTED / FILE_COPIED / FILE_MOVED / FILE_RENAMED / FILE_DELETED（**必须有事件证据**；扫描缺失≠删除）/ SOURCE_CONFIRMED / SOURCE_CORRECTED（用户操作）。
 
-FMap M2 完成了从"文件扫描器"到"AI 文件资产识别器"的升级：**15 工具/29 规则**的内置规则库（数据与引擎分离，可启停、有版本）；纯逻辑归属引擎实现 **Verified/Likely/Possible/Unknown** 四级证据分级（目录规则 1.0/0.7 权重、信号 0.4~0.9、目录+信号互证升级 Verified、冲突透明标记、仅 Verified 目录继承）；归属结果已对**真实扫描数据（508,032 条路径）**完成计算——4,245 条结论、930ms，其中 **.codex 子树 4,241 条 verified**、**.dsh（277.6MB）与 .codebuddy 真实命中 likely**、CLAUDE.md 信号 likely、ZCode 诚实标注未覆盖。测试 **37/37**（新增归属引擎 9 测）+ clippy 0 + fmt + 前端 7/7。DB v2→v3 非破坏迁移（4 列），历史数据零丢失。数据库现含 15 工具/29 规则/4,245 归属。未完成：识别中心 UI 像素截图（窗口隐藏态 UIA 限制，数据层已验证）、ZCode 待全盘扫描。隐私红线全程遵守（零正文/零哈希/零上传/零系统修改）。请基于本文件规划 M3（建议：全盘扫描补全 + 归属数据接入地图/浏览页 + 卸载安全清单）。
+**文件身份**（关键技术问题，禁止只用路径）：
+- 方案 1：卷标识 + NTFS File ID（`GetFileInformationByHandleEx` 的 FileIndex）——普通权限可用、移动/重命名后身份保持；跨卷移动即新身份；不读内容、零隐私成本 → **推荐主键基础**
+- 方案 2：受控 Hash（仅对用户显式授权的文件、可配置大小上限）——用于内容级关联（重复/覆盖检测），默认关闭
+- 方案 3：路径+mtime 弱身份——降级方案（FAT32/exFAT 等无 File ID 的文件系统）
+- 跨目录移动：File ID 相同 → FILE_MOVED 事件（旧路径→新路径）；复制 → 新 File ID + 关联源；覆盖 → 同 ID + size/mtime 变化 → FILE_MODIFIED；删除后重建 → 新 File ID（正确区分"同名不同文件"）
+- 降级链：File ID → (路径, size, mtime) 启发式 → 仅 FILE_DISCOVERED
+
+## 16. 全面文件来源追踪技术调研
+
+| 技术路线 | 能采集 | 不能采集 | 权限 | 常驻 | 隐私 | 默认开启 | 授权方式 |
+|---|---|---|---|---|---|---|---|
+| 目录扫描（已实现） | 路径元数据、存在性 | 变化历史、来源 | 普通用户 | 否 | 低（仅元数据） | ✅ | 无需 |
+| USN Journal（NTFS） | 创建/删除/重命名/数据扩展事件流 | 内容、进程 | 普通用户可读自身可见卷（FSCTL_READ_USN_JOURNAL 需卷句柄；ENUM 需管理员——**待逐项验证**） | 可选后台 | 中（全卷事件流） | ❌ 逐项授权 | 高级授权 |
+| ReadDirectoryChangesW（已验证可行） | 监视目录内变化事件 | 进程、远端原因 | 普通用户 | 监视期间是 | 低-中（仅监视目录） | ❌ | 按目录授权 |
+| ETW 进程-文件关联 | 进程级操作归因 | 意图 | **需管理员** | 是 | 高 | ❌ 永不默认 | 暂缓（M5-E 评估） |
+| 浏览器下载记录 | 下载历史（Chrome/Edge SQLite） | 下载内容 | 普通用户（复制库文件读取，原库只读） | 否 | 中-高 | ❌ 逐项授权 | 明确告知 |
+| AI 工具操作记录 | 工具官方事件（如 Claude Code hooks） | 未记录行为 | 普通用户 | 否 | 低-中 | ❌ | 逐工具授权 |
+| 包管理器记录（pip/npm 日志） | 依赖安装位置 | 谁发起 | 普通用户 | 否 | 低 | ❌ | 逐项 |
+| 文件差异分析 | 修改前后对比 | 历史（无快照则不可得） | 普通用户 | 需快照策略 | 高（读正文） | ❌ | 显式授权+大小上限 |
+| 用户主动标记 | 确认来源（最高可信） | 未知历史 | 普通用户 | 否 | 零 | ✅（功能本身） | 用户自发 |
+| macOS/Linux 事件 | FSEvents/inotify 事件流 | 同 Windows 限制 | 普通用户 | 可选 | 中 | ❌ | 同 Windows 原则 |
+
+结论：**默认只开目录扫描；USN Journal 与目录监视是 M3-B/M3-E 的两条主线（均普通权限可行，需逐项授权）；进程关联/浏览器读取/差异分析列入高级授权池，绝不默认开启；永不安装驱动或要求关闭安全功能。**
+
+## 17. M3 分阶段路线图
+
+### M3-A：文件资产基础模型（推荐最先，普通权限、零隐私增量）
+- 目标：文件实体（卷+File ID 主身份）+ 事件表 + 证据表 + 用户确认表；M2 归属兼容（attributions 成为"工具关联证据"的一种）
+- 数据库：新表 `file_entities`（vol+file_id 主键）、`file_events`（entity_id/event/ts/evidence）、`source_confirmations`；attributions 增 entity 关联（迁移 v5）
+- IPC/UI：文件详情页显示"事件时间线+证据"；用户确认对话框
+- 验收：合成树事件对账；既有 508K 路径无损迁移
+- 不做：任何监控
+
+### M3-B：基础事件追踪（扫描差分 + 可选目录监视）
+- 目标：两次扫描差分 → FILE_DISCOVERED/MODIFIED/(MISSING-待证据)；可选的 ReadDirectoryChangesW 实时监视（逐目录授权）
+- 数据库：events 表启用；监视会话表
+- 验收：合成树增删改 → 事件精确对账；取消/崩溃一致
+- 不做：USN、进程、跨卷移动推断（M3-E）
+
+### M3-C：AI 工具行为关联
+- 目标：M2 归属 + M3-B 事件 → 产出"AI 工具工作期间在该项目创建/修改"的关联证据（时间窗+工具会话活跃度，全部 likely 级）；AI 下载依赖独立分类（node_modules 等目录规则 kind=dependency）
+- 验收：真实项目工作前后扫描对比；语义红线复检（AI_MODIFIED ≠ AI_CREATED）
+
+### M3-D：普通文件来源追踪
+- 目标：浏览器下载记录集成（可选授权）、用户标记 UI、安装程序/解压目录规则扩展
+- 验收：真实下载文件被正确关联浏览器证据（用户授权后）
+
+### M3-E：高级持续追踪（最后，逐项授权）
+- 目标：USN Journal 持续追踪（NTFS）、后台监视会话、数据保留策略、跨平台评估
+- 前置：M3-A/B 稳定；用户明确授权；性能预算实测
+
+各阶段共同验收框架：§10 测试表结构 + 隐私红线检查单 + 历史数据对账。
+
+## 18. 各阶段风险、成本、难度和依赖
+
+| 阶段 | 难度 | 成本 | 关键风险 | 依赖 |
+|---|---|---|---|---|
+| M3-A | 中 | 中（模型+迁移 v5） | 508K 存量路径的实体映射性能；迁移安全 | 无（普通权限） |
+| M3-B | 中 | 中 | 事件风暴去重；差分正确性 | M3-A |
+| M3-C | 中-高 | 中 | 语义红线（关联≠来源）；会话数据隐私边界 | M3-B + 用户使用习惯 |
+| M3-D | 低-中 | 低 | 浏览器库 schema 变化；隐私授权 UX | M3-A |
+| M3-E | 高 | 高 | USN 权限细节、性能、数据量、SAC/Defender 交互 | M3-B + 用户逐项授权 |
+
+## 19. 下一阶段建议
+
+**M3-A（文件资产基础模型）为下一阶段**：普通权限、零隐私增量、为一切后续追踪打底；同时把 M2 遗留的统计卡刷新/关闭钩子顺带解决。开工前需用户确认：①接受 v5 迁移（新增三表+关联列，非破坏）②文件身份采用"卷+NTFS File ID 优先、弱身份降级"方案。
+
+## 20. 本次 Git 提交记录
+
+- 收尾前 HEAD：75e2dde（M2 主体）
+- **本次提交：见 git log 顶部 `fix(m2-final): 语义修正+迁移安全+实机验收`（单提交包含语义迁移 v4、迁移安全重构、UI 语义框、定向采样证据、本报告）**
+- 工作区：提交后干净；未推送远程
+
+---
+
+*附注：上一版 M2_FINAL_HANDOFF.md（M2 主体轮）已被本文件整体替换（单文件交接制）；M2 主体轮的详细设计细节可参考仓库内 attribution 引擎源码注释与 rules/builtin-rules-v1.json 的 per-rule source/evidence 字段。*

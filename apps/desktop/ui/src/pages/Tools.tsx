@@ -106,10 +106,18 @@ export function Tools() {
   return (
     <div>
       <h1 className="text-[19px] font-semibold">AI 工具识别中心</h1>
-      <p className="mb-4 mt-1 text-[12px] text-[#9aa0a6]">
-        基于 AI 工具目录规则库与信号文件（仅文件名，不读取正文）的归属判断。
+      <p className="mb-2 mt-1 text-[12px] text-[#9aa0a6]">
+        基于 AI 工具目录规则库与信号文件（仅文件名，不读取正文）的工具关联分析。
         每条结论都可展开证据链；无法判断时诚实显示未知。
       </p>
+      <div className="mb-4 rounded-md border border-[#4cc2ff]/30 bg-[#4cc2ff]/5 px-4 py-2.5 text-[11.5px] leading-relaxed text-[#9aa0a6]">
+        <b className="text-[#4cc2ff]">两个维度，请勿混淆：</b>
+        ① <b>工具关联</b>（本页）——某路径与某个 AI 工具存在关联，以及关联的可信度；
+        ② <b>文件来源行为</b>——文件是 AI 创建、AI 修改、AI 下载还是用户创建。
+        位置不等于来源：.codex 内的文件是工具的配置/缓存/会话数据，不代表它是 AI 生成的代码；
+        项目里有 CLAUDE.md 只说明 Claude Code 在此工作过。
+        <b>来源行为全部标记为「未知」</b>，只有你手动确认才能改变。
+      </div>
 
       {error && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">

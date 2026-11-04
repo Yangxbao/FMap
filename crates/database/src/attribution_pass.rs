@@ -462,7 +462,15 @@ impl Database {
 // ==================== 识别中心查询（公共 API，供 IPC 层调用） ====================
 
 /// 工具规则行元组（rule_id, pattern, kind, confidence, enabled, source, evidence）。
-pub type RuleRowTuple = (i64, String, String, String, bool, Option<String>, Option<String>);
+pub type RuleRowTuple = (
+    i64,
+    String,
+    String,
+    String,
+    bool,
+    Option<String>,
+    Option<String>,
+);
 /// Top 路径行元组（path_id, name, is_dir, size, confidence）。
 pub type TopPathTuple = (i64, String, bool, i64, String);
 

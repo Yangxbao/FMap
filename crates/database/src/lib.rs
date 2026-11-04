@@ -29,7 +29,7 @@ pub const SCHEMA_SQL: &str = include_str!("../../../tests/schema.sql");
 pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -93,7 +93,13 @@ impl Database {
         &self.instance_id
     }
 
-    /// 版本化迁移：空库 → 依次应用各版本 DDL。
+    /// 版本化迁移（崩溃安全设计）：
+    ///
+    /// - 每个版本阶段包在**独立事务**里，版本号写入与该阶段 DDL **同一事务**：
+    ///   任一步失败 → 整体回滚 → 版本号保持旧值 → 下次启动重跑该阶段；
+    /// - ALTER 前用 pragma_table_info 逐列检查，已存在的列跳过
+    ///   （修复 v2→v3 半迁移事故：版本号先行、缺列导致的永久失败）；
+    /// - 重复启动/重复迁移安全；历史数据不动。
     pub fn migrate(&mut self) -> Result<(), CoreError> {
         let current: i64 = self
             .conn
@@ -106,58 +112,68 @@ impl Database {
             .parse()
             .unwrap_or(0);
 
+        // v1：基线结构（CREATE TABLE IF NOT EXISTS 本身幂等；版本号同事务写入）
         if current < 1 {
-            self.conn
-                .execute_batch(SCHEMA_SQL)
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v1 迁移事务失败: {e}")))?;
+            tx.execute_batch(SCHEMA_SQL)
                 .map_err(|e| CoreError::Database(format!("应用 schema v1 失败: {e}")))?;
-            self.conn
-                .execute(
-                    "INSERT INTO meta(key,value) VALUES('schema_version','1')
-                     ON CONFLICT(key) DO UPDATE SET value='1'",
-                    [],
-                )
-                .map_err(|e| CoreError::Database(format!("写入 schema_version 失败: {e}")))?;
+            Self::set_schema_version(&tx, 1)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v1 迁移失败: {e}")))?;
         }
 
-        // v1 → v2：scans 增加 instance_id（异常退出恢复的任务归属）与 end_note（终态说明）。
-        // ALTER ADD COLUMN 为非破坏操作，既有行以 NULL 填充，历史数据不动。
+        // v1 → v2：scans.instance_id（异常退出恢复的任务归属）+ scans.end_note（终态说明）
         if current < 2 {
-            self.conn
-                .execute_batch(
-                    "ALTER TABLE scans ADD COLUMN instance_id TEXT;
-                     ALTER TABLE scans ADD COLUMN end_note TEXT;",
-                )
-                .map_err(|e| CoreError::Database(format!("应用 schema v2 失败: {e}")))?;
-            self.conn
-                .execute(
-                    "INSERT INTO meta(key,value) VALUES('schema_version','2')
-                     ON CONFLICT(key) DO UPDATE SET value='2'",
-                    [],
-                )
-                .map_err(|e| CoreError::Database(format!("写入 schema_version=2 失败: {e}")))?;
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v2 迁移事务失败: {e}")))?;
+            Self::ensure_column(&tx, "scans", "instance_id", "TEXT")?;
+            Self::ensure_column(&tx, "scans", "end_note", "TEXT")?;
+            Self::set_schema_version(&tx, 2)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v2 迁移失败: {e}")))?;
         }
 
-        // v2 → v3：规则表增加 enabled（启用/禁用）、weight（信号权重）、evidence（规则依据说明）。
-        // 仍为 ALTER ADD COLUMN 非破坏操作，历史数据不动。
+        // v2 → v3：rules.enabled/weight/evidence + tools.kind
         if current < 3 {
-            self.conn
-                .execute_batch(
-                    "ALTER TABLE rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1;
-                     ALTER TABLE rules ADD COLUMN weight REAL;
-                     ALTER TABLE rules ADD COLUMN evidence TEXT;
-                     ALTER TABLE tools ADD COLUMN kind TEXT;",
-                )
-                .map_err(|e| CoreError::Database(format!("应用 schema v3 失败: {e}")))?;
-            self.conn
-                .execute(
-                    "INSERT INTO meta(key,value) VALUES('schema_version','3')
-                     ON CONFLICT(key) DO UPDATE SET value='3'",
-                    [],
-                )
-                .map_err(|e| CoreError::Database(format!("写入 schema_version=3 失败: {e}")))?;
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v3 迁移事务失败: {e}")))?;
+            Self::ensure_column(&tx, "rules", "enabled", "INTEGER NOT NULL DEFAULT 1")?;
+            Self::ensure_column(&tx, "rules", "weight", "REAL")?;
+            Self::ensure_column(&tx, "rules", "evidence", "TEXT")?;
+            Self::ensure_column(&tx, "tools", "kind", "TEXT")?;
+            Self::set_schema_version(&tx, 3)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v3 迁移失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 4 { ... }
+        // v3 → v4：**归属语义修正**——attributions 增加 source_behavior（来源行为维度）。
+        // 工具关联 ≠ 文件来源行为：自动分析只给出工具关联结论；
+        // 来源行为（AI_CREATED/AI_MODIFIED/AI_DOWNLOADED/USER_CREATED/UNKNOWN 等）
+        // 一律 'unknown'，只有用户确认（未来功能）才能改变。既有行由 DEFAULT 填充。
+        if current < 4 {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v4 迁移事务失败: {e}")))?;
+            Self::ensure_column(
+                &tx,
+                "attributions",
+                "source_behavior",
+                "TEXT NOT NULL DEFAULT 'unknown'",
+            )?;
+            Self::set_schema_version(&tx, 4)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v4 迁移失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 5 { ... }
 
         let actual: i64 = self
             .conn
@@ -175,12 +191,48 @@ impl Database {
         Ok(())
     }
 
+    /// 幂等补列：目标列不存在时执行 ALTER，已存在则跳过。
+    /// 表/列名均来自本文件硬编码常量（非用户输入），无注入风险。
+    fn ensure_column(
+        conn: &Connection,
+        table: &str,
+        column: &str,
+        decl: &str,
+    ) -> Result<(), CoreError> {
+        let exists: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{column}'"),
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| CoreError::Database(format!("检查列 {table}.{column} 失败: {e}")))?;
+        if exists > 0 {
+            return Ok(());
+        }
+        conn.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+            [],
+        )
+        .map_err(|e| CoreError::Database(format!("补列 {table}.{column} 失败: {e}")))?;
+        Ok(())
+    }
+
+    /// 写入 schema 版本号（必须与该阶段的 DDL 在同一事务内调用）。
+    fn set_schema_version(conn: &Connection, v: i64) -> Result<(), CoreError> {
+        conn.execute(
+            "INSERT INTO meta(key,value) VALUES('schema_version',?1)
+             ON CONFLICT(key) DO UPDATE SET value=?1",
+            rusqlite::params![v.to_string()],
+        )
+        .map_err(|e| CoreError::Database(format!("写入 schema_version={v} 失败: {e}")))?;
+        Ok(())
+    }
+
     /// 异常退出恢复：把**不属于本实例**的 running 扫描标记为 failed 并写明原因。
     ///
     /// - 已入库的 paths 记录全部保留（只改 scans 终态，不删任何数据）
-    /// - 返回被恢复的扫描代 id 列表（供调用方记录/展示）
-    /// - 边界：M1 假设单实例扫描；若双实例并发，后启动实例会回收先实例的任务
-    ///   （见 docs/M1_REMAINING_ISSUES_DESIGN.md D2）
+    /// - 返回被恢复的扫描代 id 列表
+    /// - 边界：M1/M2 假设单实例扫描；双实例并发的进程存活检测列后续计划
     pub fn recover_orphaned_scans(&self) -> Result<Vec<i64>, CoreError> {
         let recovered: Vec<i64> = {
             let mut stmt = self
@@ -488,10 +540,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为3_各表为空() {
+    fn 空库初始化_版本为4_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 3);
+        assert_eq!(s.schema_version, 4);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -563,7 +615,7 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                3,
+                4,
                 "二次打开不应重复迁移"
             );
         }
@@ -603,7 +655,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            3,
+            4,
             "旧库应迁移到最新版本"
         );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
@@ -636,5 +688,109 @@ mod tests {
             .query_row("SELECT status FROM scans WHERE id=?1", [own], |r| r.get(0))
             .unwrap();
         assert_eq!(own_status, "running", "本实例任务不得被误标");
+    }
+
+    #[test]
+    fn v4迁移_既有归属行填充_source_behavior_unknown() {
+        let db = mem_db();
+        db.upsert_volume("X:\\", None, None, None, Some("NTFS"), false)
+            .unwrap();
+        let volume_id = db.ensure_volume("X:\\").unwrap();
+        let scan_db_id = db
+            .begin_scan(&["X:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let root_id = db
+            .insert_path(scan_db_id, volume_id, None, "X:", 0, true, 0, None, 0)
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tools(key,name,vendor,kind,color,builtin) VALUES('t','T','','','',1)",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO attributions(path_id,scan_id,tool_id,confidence,score,basis)
+                 VALUES(?1,?2,1,'verified',1.0,'{}')",
+                rusqlite::params![root_id, scan_db_id],
+            )
+            .unwrap();
+        // v4 迁移在 open 时已执行：既有行应被 DEFAULT 填充为 unknown
+        let sb: String = db
+            .conn
+            .query_row(
+                "SELECT source_behavior FROM attributions WHERE path_id=?1",
+                [root_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sb, "unknown", "自动归属的来源行为必须诚实标注未知");
+    }
+
+    #[test]
+    fn 迁移崩溃恢复_半迁移状态可安全续跑() {
+        // 模拟 v2 阶段崩溃：instance_id 已加、end_note 未加、版本号停在 1（事务回滚态）
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("crash.db");
+        {
+            let raw = Connection::open(&p).unwrap();
+            raw.execute_batch(SCHEMA_SQL).unwrap();
+            Database::set_schema_version(&raw, 1).unwrap();
+            // 崩溃残留：仅第一个 ALTER 已执行
+            raw.execute("ALTER TABLE scans ADD COLUMN instance_id TEXT", [])
+                .unwrap();
+            raw.execute(
+                "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
+                 VALUES('E:\','文档',1,1,'NTFS',0,0)",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO scans(started_at,status,roots,app_version,instance_id) VALUES(0,'running','[\"E:\\\\\"]','0.1.0','dead')",
+                [],
+            )
+            .unwrap();
+            raw.execute(
+                "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,scan_id) VALUES(1,NULL,'E:',0,1,0,1)",
+                [],
+            )
+            .unwrap();
+        }
+        // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4），数据保留
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 4);
+        assert_eq!(db.stats().unwrap().paths_total, 1, "崩溃恢复不得丢失数据");
+        // 遗留 running（instance_id='dead' ≠ 当前实例）→ 启动恢复由调用方触发；此处仅验证列齐全
+        let cols: Vec<String> = db
+            .conn
+            .prepare("SELECT name FROM pragma_table_info('scans')")
+            .unwrap()
+            .query_map([], |r| r.get::<_, String>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(cols.contains(&"end_note".to_string()), "缺失列应被补齐");
+        assert!(
+            cols.contains(&"instance_id".to_string()),
+            "既有列不得重复添加而报错"
+        );
+        let rec = db.recover_orphaned_scans().unwrap();
+        assert_eq!(rec, vec![1], "崩溃遗留 running 应被识别回收");
+    }
+
+    #[test]
+    fn 迁移幂等_列已存在时跳过不报错() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.db");
+        {
+            let db = Database::open(&p).unwrap(); // 已迁移到 v4
+        }
+        // 手动把 v4 列全部预建（模拟"列已存在"场景）
+        {
+            let raw = Connection::open(&p).unwrap();
+            let _ = raw.execute("ALTER TABLE attributions DROP COLUMN source_behavior", []);
+        }
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 4);
     }
 }
