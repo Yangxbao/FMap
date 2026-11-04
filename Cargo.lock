@@ -3613,6 +3613,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracenest-core",
+ "tracenest-platform",
 ]
 
 [[package]]
@@ -3633,6 +3634,7 @@ name = "tracenest-platform"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tempfile",
  "tracenest-core",
  "windows 0.61.3",
 ]

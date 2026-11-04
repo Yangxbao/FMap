@@ -411,6 +411,7 @@ fn load_latest_generation_map(
     for &id in nodes.keys() {
         let mut rev: Vec<String> = Vec::new();
         let mut cur = Some(id);
+        let mut cached = false; // 命中缓存片段拼接（已在循环内落缓存）
         while let Some(cid) = cur {
             if let Some(parts) = memo.get(&cid).cloned() {
                 let mut base = parts;
@@ -418,6 +419,7 @@ fn load_latest_generation_map(
                     base.push(n.clone());
                 }
                 memo.insert(id, base);
+                cached = true;
                 break;
             }
             if let Some((parent, name)) = nodes.get(&cid) {
@@ -427,7 +429,7 @@ fn load_latest_generation_map(
                 break;
             }
         }
-        if !memo.contains_key(&id) {
+        if !cached {
             // 完整走到根（无缓存命中）：rev 现为 [自身..根]，反转后落缓存
             rev.reverse();
             memo.insert(id, rev);

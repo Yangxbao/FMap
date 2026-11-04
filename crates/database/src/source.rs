@@ -333,12 +333,11 @@ impl Database {
             )
             .map_err(|e| CoreError::Database(format!("写入确认失败: {e}")))?;
         // 3) 事件（时间线可见；append-only）
-        let event_kind = if action == "revoke" {
-            event_kind::SOURCE_CORRECTED
-        } else if action == "correct" {
-            event_kind::SOURCE_CORRECTED
-        } else {
+        // confirm → source_confirmed；correct / revoke（撤回到 unknown 也是一次修正）→ source_corrected
+        let event_kind = if action == "confirm" {
             event_kind::SOURCE_CONFIRMED
+        } else {
+            event_kind::SOURCE_CORRECTED
         };
         self.conn
             .execute(
