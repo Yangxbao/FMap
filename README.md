@@ -15,7 +15,7 @@ FMap 是一款**跨平台、隐私优先、完全本地运行**的 AI 文件资�
 
 | 模块 | 状态 |
 |---|---|
-| 桌面应用壳（Tauri 2 + React 19 + TypeScript） | ✅ 代码完成，前端已构建/测试/渲染验证；桌面运行待 [Rust 工具链](docs/M1_HANDOFF.md#5-工具链就绪后立即执行按序) |
+| 桌面应用壳（Tauri 2 + React 19 + TypeScript） | ✅ 代码完成，前端已构建/测试/渲染验证；桌面运行已真机验收（M1 收尾） |
 | IPC 命令层（4 个只读命令） | ✅ 双侧定义；端到端待桌面运行 |
 | SQLite 存储层（WAL + 迁移 + 12 张表） | ✅ 代码完成；**Schema 已实机验证**（node:sqlite）；Rust 测试待工具链 |
 | 平台抽象 + Windows 磁盘发现 | ✅ 代码完成（Win32 API，免管理员）；编译待工具链 |
@@ -44,7 +44,7 @@ Tauri 2 · Rust（crates: core / database / platform）· React 19 + TypeScript 
 
 ```bash
 # 0) 前置（一次性）：Rust stable-msvc + MSVC Build Tools + WebView2（Win10/11 自带）
-#    步骤见 docs/M1_HANDOFF.md §5
+#    步骤见 docs/M2_FINAL_HANDOFF.md §8 / docs/development/ENVIRONMENT_CHECK.md
 
 # 1) 前端
 cd apps/desktop/ui
@@ -74,7 +74,7 @@ crates/database    SQLite 层（迁移、卷/扫描 CRUD、统计）
 crates/platform    平台抽象（磁盘发现、能力检测、提权检测；Windows 优先）
 apps/desktop       Tauri 2 壳 + React 前端
 tests/             Schema 权威 DDL + 无需工具链可跑的真实验证脚本
-docs/              研究报告 / PRD / 架构设计 / 开发文档（先读 docs/NEXT_STEPS_FOR_HUMAN.md）
+docs/              交接报告 / 研究报告 / PRD / 架构设计 / 开发文档（先读 docs/M2_FINAL_HANDOFF.md）
 prototype/         早期静态原型（仅参考，非正式应用）
 ```
 
@@ -98,11 +98,11 @@ prototype/         早期静态原型（仅参考，非正式应用）
 
 | 主题 | 文档 |
 |---|---|
-| 新手入口 | [docs/NEXT_STEPS_FOR_HUMAN.md](docs/NEXT_STEPS_FOR_HUMAN.md) |
+| 唯一交接入口 | [docs/M2_FINAL_HANDOFF.md](docs/M2_FINAL_HANDOFF.md)（单文件交接制） |
 | 产品定义 | [docs/product/PRD.md](docs/product/PRD.md) |
 | 差异化研究 | [docs/research/COMPETITORS.md](docs/research/COMPETITORS.md) · [INNOVATION_IDEAS.md](docs/research/INNOVATION_IDEAS.md) |
 | 技术边界 | [docs/research/TECH_FEASIBILITY.md](docs/research/TECH_FEASIBILITY.md) |
-| 开发交接 | [docs/M1_HANDOFF.md](docs/M1_HANDOFF.md) · [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) |
+| 开发交接与历史 | [docs/M2_FINAL_HANDOFF.md](docs/M2_FINAL_HANDOFF.md) · [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)（过程文档已归档于 Git 历史） |
 
 ## 许可证
 
