@@ -208,8 +208,8 @@ M1/M2 的 12 张表（meta/volumes/scans/paths/paths_fts/tools/rule_packs/rules/
 | 阶段 | 目标 | 依赖 | 状态 |
 |---|---|---|---|
 | ~~M3-A~~ | ~~文件资产基础模型~~ | — | ✅ **已完成（2026-11-05）** |
-| **M3-B1** | 基础事件追踪：扫描差分 → FILE_DISCOVERED/MODIFIED/MISSING/REAPPEARED（保守语义，缺失≠删除）；v6 迁移（file_events 重建+volume_id/rel_path+coverage_gaps/scan_scope） | M3-A ✅ | **设计 v3 完成（docs/M3_B_DESIGN.md），待审核；编码未启动** |
-| **M3-B2** | 可选 RDCW 目录监控（**用户已决定纳入 M3-B**）：逐目录授权/默认关闭/启动暂停恢复撤销；原始通知入旧 events 表；溢出→对账扫描→差分补齐；v7 迁移 | M3-B1 验收 | 设计 v3 §7 完成，待审核；编码未启动 |
+| **M3-B1** | 基础事件追踪：扫描差分四类事件+台账（保守语义，缺失≠删除） | M3-A ✅ | ✅ **编码完成（B1-0~B1-3，85+11 测试全绿；副本迁移验证通过）；docs/M3_B_IMPLEMENTATION_HANDOFF.md**——真实库迁移与真机验收待用户授权 |
+| **M3-B2** | 可选 RDCW 目录监控（**用户已决定纳入 M3-B**）：逐目录授权/默认关闭/启停撤销；原始通知入 events 表；四层水位 gap 生命周期 | M3-B1 验收 | 设计完成（docs/M3_B_DESIGN.md v6 已入库）；编码待 B1-4 真机验收 |
 | **M3-C** | AI 工具行为关联：工具关联+时间关联候选（**不产 AI_CREATED/MODIFIED**）；候选重建机制首次投产 | M3-B | 规划完成（语义已修正） |
 | **M3-D** | 普通文件来源：浏览器下载记录集成（可选授权）+ 用户标记 UI | M3-A | 规划完成 |
 | **M3-E** | 高级持续追踪：USN Journal（需管理员评估）+ 后台监视 + 跨平台 | M3-B + 用户逐项授权 | 规划完成 |
