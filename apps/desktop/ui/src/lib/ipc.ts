@@ -228,4 +228,48 @@ export const api = {
     invoke<EffectiveSource>("confirm_source", { pathId, behavior, note }),
   revokeSource: (pathId: number, note: string | null) =>
     invoke<EffectiveSource>("revoke_source", { pathId, note }),
+  // M3-B1 历史追踪
+  getDiffRuns: (volumeId: number | null) =>
+    invoke<DiffRunRow[]>("get_diff_runs", { volumeId }),
+  getHistoryEvents: (limit: number) =>
+    invoke<HistoryEventRow[]>("get_history_events", { limit }),
+  runDiffNow: (volumeId: number) =>
+    invoke<DiffSummary>("run_diff_now", { volumeId }),
 };
+
+export interface DiffRunRow {
+  id: number;
+  volume_id: number;
+  from_scan_id: number;
+  to_scan_id: number;
+  status: string;
+  events_count: number;
+  ambiguous_count: number;
+  skip_reason: string | null;
+  created_at: number;
+}
+
+export interface HistoryEventRow {
+  id: number;
+  ts: number;
+  kind: string;
+  volume_id: number | null;
+  rel_path: string | null;
+  detail: string | null;
+  entity_id: number | null;
+}
+
+export interface DiffSummary {
+  status: string;
+  pairs_completed: number;
+  pairs_skipped: number;
+  events_total: number;
+  discovered: number;
+  modified: number;
+  missing: number;
+  reappeared: number;
+  ambiguous: number;
+  missing_suppressed: number;
+  blocked_pair: [number, number] | null;
+  error: string | null;
+}

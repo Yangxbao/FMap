@@ -66,6 +66,32 @@ export function eventKindLabel(k: string): string {
     source_confirmed: "来源确认",
     source_corrected: "来源修正",
     file_id_reuse_suspected: "身份重用嫌疑（待确认）",
+    file_discovered: "首次观察到",
+    file_modified: "观察到变化",
+    file_missing: "缺失（待确认）",
+    file_reappeared: "重新出现",
   };
   return map[k] ?? k;
+}
+
+/** 差分台账状态 → 中文标签。 */
+export function diffRunStatusLabel(st: string): string {
+  const map: Record<string, string> = {
+    completed: "已完成研判",
+    skipped_scope_mismatch: "已跳过（扫描范围不一致）",
+    skipped_over_limit: "已跳过（人工确认放弃超限对）",
+    pending_over_limit: "已阻塞（事件量超限，待人工处理）",
+  };
+  return map[st] ?? st;
+}
+
+/** 差分事件 detail JSON 的 note 字段（语义备注）。 */
+export function eventNote(detail: string | null): string {
+  if (!detail) return "";
+  try {
+    const o = JSON.parse(detail) as { note?: string };
+    return o.note ?? "";
+  } catch {
+    return "";
+  }
 }

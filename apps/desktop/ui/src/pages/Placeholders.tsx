@@ -49,13 +49,6 @@ export function Projects() {
   );
 }
 
-export function History() {
-  return (
-    <Page title="历史追踪" sub="快照差分 + 事件时间线，全部标注置信度">
-      <DevPlaceholder feature="历史时间线" milestone="V0.2" note="历史重建基于快照差分（诚实版），不做 USN 全盘回放（需管理员权限，已排除）。" />
-    </Page>
-  );
-}
 
 export function Monitor() {
   return (

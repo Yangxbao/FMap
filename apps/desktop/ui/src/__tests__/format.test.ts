@@ -1,7 +1,9 @@
 /** 前端纯函数测试（vitest 真实执行）。 */
 import { describe, expect, it } from "vitest";
 import {
+  diffRunStatusLabel,
   eventKindLabel,
+  eventNote,
   formatBytes,
   isPageId,
   pageFromHash,
@@ -56,6 +58,29 @@ describe("M3-A 来源语义标签", () => {
     expect(eventKindLabel("source_confirmed")).toBe("来源确认");
     expect(eventKindLabel("source_corrected")).toBe("来源修正");
     expect(eventKindLabel("file_id_reuse_suspected")).toBe("身份重用嫌疑（待确认）");
-    expect(eventKindLabel("file_discovered")).toBe("file_discovered");
+    expect(eventKindLabel("file_discovered")).toBe("首次观察到"); // M3-B1 起有语义标签
+  });
+});
+
+describe("M3-B1 差分事件与台账标签", () => {
+  it("四类差分事件文案遵守语义红线", () => {
+    expect(eventKindLabel("file_discovered")).toBe("首次观察到");
+    expect(eventKindLabel("file_modified")).toBe("观察到变化");
+    expect(eventKindLabel("file_missing")).toBe("缺失（待确认）");
+    expect(eventKindLabel("file_reappeared")).toBe("重新出现");
+    // 红线：文案不得出现"创建""删除"等断言
+    for (const k of ["file_discovered", "file_modified", "file_missing", "file_reappeared"]) {
+      const label = eventKindLabel(k);
+      expect(label).not.toContain("创建");
+      expect(label).not.toContain("删除");
+    }
+  });
+  it("台账状态与 note 提取", () => {
+    expect(diffRunStatusLabel("completed")).toBe("已完成研判");
+    expect(diffRunStatusLabel("pending_over_limit")).toBe("已阻塞（事件量超限，待人工处理）");
+    expect(diffRunStatusLabel("weird")).toBe("weird");
+    expect(eventNote(null)).toBe("");
+    expect(eventNote("{\"note\":\"abc\"}")).toBe("abc");
+    expect(eventNote("not-json")).toBe("");
   });
 });
