@@ -1,7 +1,8 @@
 # FMap M3-B1 实施交接报告（M3_B_IMPLEMENTATION_HANDOFF · 单文件主报告）
 
-> **更新时间**：2026-11-06 · **状态**：B1-0 ~ B1-3 完成并提交；B1-4 门禁全绿，
-> 真实库副本迁移验证通过；**真实库迁移与真机启动验收等待用户授权**
+> **更新时间**：2026-11-06 · **状态**：**B1 全部完成并通过真实环境验收**——
+> 真实库已由应用自身迁移 v5→v6（数据无损）；端到端四类事件真机验证全部通过；
+> B2（RDCW）按用户决定待启动
 > **设计基准**：docs/M3_B_DESIGN.md v6（已入库，随本轮提交）
 > **提交链**：B1-0 `40be846→…`（各阶段独立提交，见 §8）
 
@@ -15,7 +16,7 @@
 | B1-1 差分核心 | ✅ 完成 | pathnorm/scan_scope（core）+ diff_pass 引擎（database） |
 | B1-2 流程接线 | ✅ 完成 | scanner 缺口收集 + scope/coverage 落库 + 扫描后自动差分 + 卷登记规范化 + IPC |
 | B1-3 前端展示 | ✅ 完成 | 历史追踪页启用（台账+事件时间线）+ 语义标签 + vitest |
-| B1-4 验收 | ✅ 门禁全绿 / ⏸ 真机部分 | 见 §7 迁移状态与 §9 授权申请 |
+| B1-4 验收 | ✅ **全部通过** | 门禁全绿 + 真实库迁移（应用自身，数据无损）+ 端到端四类事件真机验证 + UI 一致性核对（详见 §9） |
 
 ## 2. 修改的文件
 
@@ -95,7 +96,45 @@ get_diff_runs/get_history_events/run_diff_now）· `apps/desktop/src-tauri/src/l
   半迁移/脏残留收敛、约束验证）。
 - **真实库副本**：已验证无损（§4 表格 + node 交叉核对；备份
   `backups/pre-v6-20261106-005346\`）。
-- **真实库本体**：**仍为 v5，未动**（本轮预检只读确认）。
+- **真实库本体**：✅ **已由应用自身完成 v5→v6 迁移**（2026-11-06 真机验收）：
+  schema v6 · paths 508,032→3,304,106（含本轮 5 次真实扫描的代式追加）·
+  attributions 4,245（全 unknown）· 台账 4 行 · 差分事件 227 条 · 备份
+  `backups/pre-v6-final-20261106-010119\`（v5 · integrity ok）留存。
+
+## 7.1 B1-4 真机端到端验收结果（2026-11-06）
+
+**环境**：release 构建（custom-protocol 内嵌资产——顺带修复 M0 骨架缺失的
+`[features] custom-protocol`，`cargo build --release` 不再依赖 dev server）·
+普通用户权限 · 真实 E 盘（368K 路径/次扫描）
+
+**端到端序列**（测试文件仅建于自建临时目录 `E:map-e2e\`，未触碰用户文件）：
+
+| 轮 | 操作 | 扫描代 | 差分对 | 验证结果 |
+|---|---|---|---|---|
+| 1 | 基线（a.txt 已在） | scan5 done 368,673 | — | **基线语义正确**：历史 4 代均为 failed/cancelled（无 done），scan5 无差分对，日志"事件 0"= 设计预期 |
+| 2 | 新建 b.txt → 扫描 | scan6 ⚠️（见下） | — | scan6 意外为全盘（UI 二次 toggle 取消勾选 → 触发 M1 既有"未选=全盘"默认）；差分**卷隔离防御正确**：scan5(E) 与 scan6(C 混挂) 不构成合法对，拒绝研判 |
+| 3 | （重新勾选 E）扫描 | scan7 done 368K | (5,7) completed **90 事件** | ✅ **DISCOVERED `fmap-e2e/b.txt`**（另有 E 盘自然变化 60 新/30 改） |
+| 4 | 修改 a.txt（18B→64B）→ 扫描 | scan8 done | (7,8) completed **90 事件** | ✅ **MODIFIED `fmap-e2e/a.txt`** detail：`size 18→64` + "观察到的元数据变化，不代表内容变化" |
+| 5 | 删除 b.txt → 扫描 | scan9 done | (8,9) completed **12 事件** | ✅ **MISSING `fmap-e2e/b.txt`** 挂 scan9（缺失起始代）+ "待确认，不代表已删除"；无 FILE_DELETED |
+| 6 | 恢复 b.txt → 扫描 | scan10 done | (9,10) completed **35 事件** | ✅ **REAPPEARED `fmap-e2e/b.txt`** detail：`missing_since_scan=9`（与设计口径一致）+ "原因不做推断" |
+
+**台账**：4 行连续 completed（to_scan 7/8/9/10）——差分区间连续无跳对。
+**事件总量**：227 条（四类：discovered 133 / modified 89 / missing 4 / reappeared 1，
+含 E 盘两次扫描间的真实系统变化——真实环境含金量）。
+**UI 一致性**：历史追踪页事件行与数据库逐字段一致（时间/类型徽标/卷/相对路径/
+detail 摘要/语义文案）；设置页身份采集默认关闭（M3-A 已验 + meta 键 DB 侧复核）。
+**退出钩子**：stderr 实录 6 条差分结果 + "退出：已请求取消全部在跑任务"，应用优雅退出（exit 0）。
+
+**发现并如实记录的问题**：
+1. **[M1 既有边界暴露] 多根扫描数据混挂**：scan6（C+D+E 三盘）的全部路径挂到
+   第一根的卷（C 盘）——差分卷隔离防御正确拒绝了非法对，但 scan6 的 952K 混挂
+   路径已在库中（历史数据不清理）。**影响**：卷 2（C）的后续差分会因 scope/路径
+   语义混乱被保守跳过；**缓解**：C 盘重新单盘扫描后正常（新 done 代序列以单盘
+   scope 代为准）；**根治**：多根扫描拆分为每卷独立扫描代（M3-C 前完成）。
+2. **[已修复] release 构建缺 custom-protocol feature**（M0 骨架遗漏）：
+   src-tauri/Cargo.toml 补 `[features] custom-protocol = ["tauri/custom-protocol"]`——
+   release 构建现内嵌前端资产（tauri.localhost），不再依赖 dev server。
+3. 侧栏"历史追踪"徽标仍显示 V0.2（Layout 静态标记，功能已实现）—— cosmetic，留 B2 顺带。
 
 ## 8. Git 状态
 

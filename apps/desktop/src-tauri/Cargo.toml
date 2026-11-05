@@ -9,6 +9,11 @@ license.workspace = true
 name = "tracenest_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+# Tauri 2 标准打包特性：启用后 cargo build 使用 tauri.conf.json 的 frontendDist
+# （内嵌前端资产）而非 devUrl——release 验收/打包必需。
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { workspace = true }
 
