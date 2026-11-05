@@ -108,10 +108,6 @@ impl<'a> ImmediateTx<'a> {
         self.finished = true;
         Ok(())
     }
-    fn rollback(mut self) {
-        let _ = self.conn.execute_batch("ROLLBACK");
-        self.finished = true;
-    }
 }
 
 impl Drop for ImmediateTx<'_> {
@@ -384,20 +380,16 @@ fn next_pending_pair(db: &Database, volume_id: i64) -> Result<PairDecision, Core
     Ok(PairDecision::None)
 }
 
-fn prev_done_of(gens: &[i64], to: i64) -> Option<i64> {
-    gens.windows(2)
-        .find(|w| w[1] == to)
-        .map(|w| w[0])
-        .or_else(|| gens.first().copied().filter(|g| *g != to))
-}
-
 // ---------------------------------------------------------------------------
 // 代加载 / 缺失集 / 实体映射 / scope / coverage
 // ---------------------------------------------------------------------------
 
+/// 节点原始行（id → 父/名/类型/大小/时间）。
+type RawNode = (Option<i64>, String, bool, i64, Option<i64>);
+
 /// 加载一个扫描代的全部路径，按逻辑路径键聚合（值 Vec 以支持歧义检测）。
 fn load_generation(db: &Database, volume_id: i64, scan_id: i64) -> Result<GenMap, CoreError> {
-    let mut nodes: HashMap<i64, (Option<i64>, String, bool, i64, Option<i64>)> = HashMap::new();
+    let mut nodes: HashMap<i64, RawNode> = HashMap::new();
     {
         let mut stmt = db
             .conn

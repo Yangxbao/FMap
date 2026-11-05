@@ -203,22 +203,27 @@ M1/M2 的 12 张表（meta/volumes/scans/paths/paths_fts/tools/rule_packs/rules/
 | 14 | file_events 目前仅确认/重用嫌疑事件；发现/修改事件依赖 M3-B | 设计 | M3-B 落地 |
 | 15 | 来源确认面板的 onDone 回调暂为空操作（确认后未刷新徽标列表，面板内即时可见） | 低 | 可在 M3-B 顺带加列表刷新 |
 
-## 7. 后续开发路线（M3-B → M3-E，**均已规划未开发**）
+## 7. 后续开发路线（M3-B → M3-E）
 
 | 阶段 | 目标 | 依赖 | 状态 |
 |---|---|---|---|
 | ~~M3-A~~ | ~~文件资产基础模型~~ | — | ✅ **已完成（2026-11-05）** |
-| **M3-B** | 基础事件追踪：扫描差分 → FILE_DISCOVERED/MODIFIED；events 表填充；可选 RDCW 目录监视（逐目录授权） | M3-A ✅ | 规划完成（见 M2_FINAL_HANDOFF §17） |
+| **M3-B1** | 基础事件追踪：扫描差分 → FILE_DISCOVERED/MODIFIED/MISSING/REAPPEARED（保守语义，缺失≠删除）；v6 迁移（file_events 重建+volume_id/rel_path+coverage_gaps/scan_scope） | M3-A ✅ | **设计 v3 完成（docs/M3_B_DESIGN.md），待审核；编码未启动** |
+| **M3-B2** | 可选 RDCW 目录监控（**用户已决定纳入 M3-B**）：逐目录授权/默认关闭/启动暂停恢复撤销；原始通知入旧 events 表；溢出→对账扫描→差分补齐；v7 迁移 | M3-B1 验收 | 设计 v3 §7 完成，待审核；编码未启动 |
 | **M3-C** | AI 工具行为关联：工具关联+时间关联候选（**不产 AI_CREATED/MODIFIED**）；候选重建机制首次投产 | M3-B | 规划完成（语义已修正） |
 | **M3-D** | 普通文件来源：浏览器下载记录集成（可选授权）+ 用户标记 UI | M3-A | 规划完成 |
 | **M3-E** | 高级持续追踪：USN Journal（需管理员评估）+ 后台监视 + 跨平台 | M3-B + 用户逐项授权 | 规划完成 |
 
-**下一步**：M3-B（基础事件追踪）。开工前向用户确认：
-1. 差分事件词表与"消失"语义（扫描缺失≠删除，需 FILE_MISSING 待确认事件——M2_FINAL_HANDOFF §15）
-2. RDCW 可选监视是否纳入本轮（逐目录授权 UX）
+**下一步**：M3-B 设计审核通过后，按 docs/M3_B_DESIGN.md §14 准入评估执行。
+**B1 编码前待确认决策（D1–D6）**：v6 全部条目（file_events 重建 + volume_id/rel_path
+两列 + coverage_gaps/scan_scope + 索引 + meta 游标/跳过记录 + revoke 语义精确化 +
+deleted_at 弃用注释修正）、单对事件上限 50,000、scope 跳过记录载体（meta 结构化键）、
+coverage_gaps 改名与阈值（10,000 截断）、单对差分原子事务（BEGIN IMMEDIATE）。
+**B2 编码前待确认（D7）**：重启不自动恢复监控（提示式）/ 撤销时通知数据处置 / v7
+events 表 source 前瞻列。
 
 **不能重复开发**：M0/M1/M2/M3-A 全部——已实现且测试通过（62 Rust + 9 前端）。
-**必须先征求用户同意**：全盘扫描、安装任何组件、Git 推送、identifier 更改、启动 M3-B。
+**必须先征求用户同意**：全盘扫描、安装任何组件、Git 推送、identifier 更改、启动 M3-B 编码。
 
 ## 8. 本次任务完整记录（M3-A 会话）
 

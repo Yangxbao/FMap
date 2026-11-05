@@ -204,7 +204,7 @@ impl Database {
             .map(|k| format!("'{k}'"))
             .collect::<Vec<_>>()
             .join(",");
-        let stats = RevokeStats {
+        let mut stats = RevokeStats {
             deleted_data: true,
             events: count(&format!(
                 "DELETE FROM file_events WHERE kind IN ({kind_list})"
@@ -220,7 +220,6 @@ impl Database {
                 [],
             )
             .map_err(|e| CoreError::Database(format!("解除观察事件实体引用失败: {e}")))?;
-        let mut stats = stats;
         stats.evidence = count(
             "DELETE FROM source_evidence WHERE id NOT IN \
              (SELECT evidence_id FROM file_events WHERE evidence_id IS NOT NULL)",
@@ -231,7 +230,6 @@ impl Database {
         self.conn
             .execute("UPDATE volumes SET volume_guid=NULL", [])
             .map_err(|e| CoreError::Database(format!("清除卷 GUID 失败: {e}")))?;
-        let mut stats = stats;
         stats.entities = count("DELETE FROM file_entities")?;
         Ok(stats)
     }

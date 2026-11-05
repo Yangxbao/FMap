@@ -326,28 +326,102 @@ impl Database {
         fs_type: Option<&str>,
         is_removable: bool,
     ) -> Result<i64, CoreError> {
+        // v6（M3-B1）：登记入口规范化（大写化 + 反斜杠统一 + 尾分隔符）——
+        // 大小写/分隔符变体归并到同一卷行（T50）。
+        // 存量兼容：先按规范化键查等价存量行——
+        //   唯一匹配 → 复用原 volume_id（按 id 更新，**不改存量 root 字符串**，
+        //              历史 paths/attributions 的卷关联一行不动）；
+        //   多条匹配 → 拒绝并要求人工处理（绝不静默新增第三条重复登记）。
+        let norm = tracenest_core::pathnorm::normalize_root(root);
+        let existing: Vec<(i64, String)> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT id, root FROM volumes")
+                .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?;
+            let it = stmt
+                .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))
+                .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?;
+            it.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?
+        };
+        let matches: Vec<i64> = existing
+            .iter()
+            .filter(|(_, r)| tracenest_core::pathnorm::normalize_root(r) == norm)
+            .map(|(id, _)| *id)
+            .collect();
+        match matches.len() {
+            0 => {
+                self.conn
+                    .execute(
+                        "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
+                         VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                        rusqlite::params![
+                            norm,
+                            label,
+                            total_bytes.map(|v| v as i64),
+                            free_bytes.map(|v| v as i64),
+                            fs_type,
+                            is_removable as i64,
+                            now_ms()
+                        ],
+                    )
+                    .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?;
+                Ok(self.conn.last_insert_rowid())
+            }
+            1 => {
+                self.conn
+                    .execute(
+                        "UPDATE volumes SET label=?1, total_bytes=?2, free_bytes=?3,
+                           fs_type=?4, is_removable=?5 WHERE id=?6",
+                        rusqlite::params![
+                            label,
+                            total_bytes.map(|v| v as i64),
+                            free_bytes.map(|v| v as i64),
+                            fs_type,
+                            is_removable as i64,
+                            matches[0]
+                        ],
+                    )
+                    .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?;
+                Ok(matches[0])
+            }
+            _ => Err(CoreError::Other(format!(
+                "存在 {} 条规范化等价的卷登记（root 互为大小写/分隔符变体），                 拒绝自动合并：请人工处理后重试（ids={:?}）",
+                matches.len(),
+                matches
+            ))),
+        }
+    }
+
+    /// 写入扫描代的范围快照（roots + 排除规则 + 符号链接策略）。
+    /// 差分以"两代 scope 规范化一致"为 MISSING 判定前置条件。
+    pub fn set_scan_scope(
+        &self,
+        scan_id: i64,
+        scope: &tracenest_core::scan_scope::ScanScope,
+    ) -> Result<(), CoreError> {
         self.conn
             .execute(
-                "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
-                 VALUES(?1,?2,?3,?4,?5,?6,?7)
-                 ON CONFLICT(root) DO UPDATE SET
-                   label=excluded.label,
-                   total_bytes=excluded.total_bytes,
-                   free_bytes=excluded.free_bytes,
-                   fs_type=excluded.fs_type,
-                   is_removable=excluded.is_removable",
-                rusqlite::params![
-                    root,
-                    label,
-                    total_bytes.map(|v| v as i64),
-                    free_bytes.map(|v| v as i64),
-                    fs_type,
-                    is_removable as i64,
-                    now_ms()
-                ],
+                "UPDATE scans SET scan_scope=?1 WHERE id=?2",
+                rusqlite::params![serde_json::to_string(scope).unwrap_or_default(), scan_id],
             )
-            .map_err(|e| CoreError::Database(format!("登记卷失败: {e}")))?;
-        Ok(self.conn.last_insert_rowid())
+            .map_err(|e| CoreError::Database(format!("写入扫描范围失败: {e}")))?;
+        Ok(())
+    }
+
+    /// 写入扫描代的覆盖缺口清单（权限拒绝/条目失败/排除目录；相对登记根）。
+    pub fn set_scan_coverage(
+        &self,
+        scan_id: i64,
+        gaps: &tracenest_core::scan_scope::CoverageGaps,
+    ) -> Result<(), CoreError> {
+        self.conn
+            .execute(
+                "UPDATE scans SET coverage_gaps=?1 WHERE id=?2",
+                rusqlite::params![serde_json::to_string(gaps).unwrap_or_default(), scan_id],
+            )
+            .map_err(|e| CoreError::Database(format!("写入覆盖缺口失败: {e}")))?;
+        Ok(())
     }
 
     /// 创建一条扫描任务记录（登记本实例标识），返回扫描代 id。
@@ -1053,6 +1127,107 @@ mod tests {
         assert_eq!(db.stats().unwrap().paths_total, 2);
     }
 
+    #[test]
+    fn t50_卷登记规范化_变体归并_存量复用_冲突拒绝() {
+        let db = mem_db();
+        let id1 = db
+            .upsert_volume("e:/project", None, None, None, None, false)
+            .unwrap();
+        // 大小写/分隔符/尾分隔符变体 → 复用同一行（不新增）
+        let id2 = db
+            .upsert_volume("E:\\PROJECT", None, None, None, None, false)
+            .unwrap();
+        assert_eq!(id1, id2, "大小写与分隔符变体必须归并到同一卷");
+        assert_eq!(db.stats().unwrap().volumes, 1);
+        // 存量 root 字符串不被修改（历史数据不动原则）
+        let stored: String = db
+            .conn
+            .query_row("SELECT root FROM volumes WHERE id=?1", [id1], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, "E:\\PROJECT\\", "新登记以规范化形式存储");
+        // 盘根语义保持
+        let id3 = db
+            .upsert_volume("X:", None, None, None, None, false)
+            .unwrap();
+        let stored3: String = db
+            .conn
+            .query_row("SELECT root FROM volumes WHERE id=?1", [id3], |r| r.get(0))
+            .unwrap();
+        assert!(
+            stored3.ends_with('\\') || stored3.ends_with('/'),
+            "根必须有尾分隔符"
+        );
+        // 不同路径仍是不同卷
+        let id4 = db
+            .upsert_volume("E:/other", None, None, None, None, false)
+            .unwrap();
+        assert_ne!(id1, id4);
+    }
+
+    #[test]
+    fn t33_事件kind域注册完备() {
+        use crate::diff_pass::kinds;
+        use crate::source::event_kind;
+        // 身份域 ∩ 观察域 = ∅（两域互斥）
+        for k in event_kind::IDENTITY_DOMAIN_KINDS {
+            assert!(
+                !kinds::ALL.contains(&k),
+                "kind {k} 同时出现在身份域与观察域——域注册表冲突"
+            );
+        }
+        // 全部已知 kind 都被某域收录（新增 kind 未登记 → 此测试失败提醒）
+        let all_known = [
+            event_kind::SOURCE_CONFIRMED,
+            event_kind::SOURCE_CORRECTED,
+            event_kind::FILE_ID_REUSE_SUSPECTED,
+            kinds::DISCOVERED,
+            kinds::MODIFIED,
+            kinds::MISSING,
+            kinds::REAPPEARED,
+        ];
+        for k in all_known {
+            let in_identity = event_kind::IDENTITY_DOMAIN_KINDS.contains(&k);
+            let in_observation = kinds::ALL.contains(&k);
+            assert!(in_identity || in_observation, "kind {k} 未登记任何域");
+        }
+    }
+
+    #[test]
+    fn t54_扫描范围与覆盖缺口写入读取() {
+        let db = mem_db();
+        let scan = db
+            .begin_scan(&["X:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let scope = tracenest_core::scan_scope::ScanScope {
+            roots: vec!["X:\\".into()],
+            exclude_dir_names: vec!["$RECYCLE.BIN".into()],
+            follow_symlinks: false,
+        };
+        db.set_scan_scope(scan, &scope).unwrap();
+        db.set_scan_coverage(
+            scan,
+            &tracenest_core::scan_scope::CoverageGaps {
+                paths: vec![tracenest_core::scan_scope::CoverageGap {
+                    rel_path: "locked".into(),
+                    kind: "dir".into(),
+                    reason: "denied".into(),
+                }],
+                truncated: false,
+            },
+        )
+        .unwrap();
+        let read: (Option<String>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT scan_scope, coverage_gaps FROM scans WHERE id=?1",
+                [scan],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(read.0.as_deref().unwrap_or("").contains("X:"));
+        assert!(read.1.as_deref().unwrap_or("").contains("locked"));
+    }
+
     // ==================== v6 迁移（M3-B1）专项测试 ====================
 
     /// 构造一个真实的 v5 库：v5 全部结构 + 身份域 file_events 事件（entity 挂点）。
@@ -1274,5 +1449,103 @@ mod tests {
             })
             .unwrap();
         assert!(guid.is_none(), "撤销授权时可清除 GUID");
+    }
+}
+
+// ==================== M3-B1 查询 API（历史追踪页数据源） ====================
+
+/// 差分台账行（观察域）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiffRunRow {
+    pub id: i64,
+    pub volume_id: i64,
+    pub from_scan_id: i64,
+    pub to_scan_id: i64,
+    pub status: String,
+    pub events_count: i64,
+    pub ambiguous_count: i64,
+    pub skip_reason: Option<String>,
+    pub created_at: i64,
+}
+
+/// 历史事件行（观察域差分事件）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HistoryEventRow {
+    pub id: i64,
+    pub ts: i64,
+    pub kind: String,
+    pub volume_id: Option<i64>,
+    pub rel_path: Option<String>,
+    pub detail: Option<String>,
+    pub entity_id: Option<i64>,
+}
+
+impl Database {
+    /// 差分台账查询（volume_id=None = 全部卷）。
+    pub fn diff_runs(&self, volume_id: Option<i64>) -> Result<Vec<DiffRunRow>, CoreError> {
+        let sql = "SELECT id, volume_id, from_scan_id, to_scan_id, status, events_count, ambiguous_count, skip_reason, created_at FROM scan_diff_runs";
+        let (query, vol) = match volume_id {
+            Some(v) => (
+                format!("{sql} WHERE volume_id=?1 ORDER BY to_scan_id DESC, id DESC"),
+                Some(v),
+            ),
+            None => (format!("{sql} ORDER BY to_scan_id DESC, id DESC"), None),
+        };
+        let mut stmt = self
+            .conn
+            .prepare(&query)
+            .map_err(|e| CoreError::Database(format!("台账查询失败: {e}")))?;
+        let map = |r: &rusqlite::Row| -> rusqlite::Result<DiffRunRow> {
+            Ok(DiffRunRow {
+                id: r.get(0)?,
+                volume_id: r.get(1)?,
+                from_scan_id: r.get(2)?,
+                to_scan_id: r.get(3)?,
+                status: r.get(4)?,
+                events_count: r.get(5)?,
+                ambiguous_count: r.get(6)?,
+                skip_reason: r.get(7)?,
+                created_at: r.get(8)?,
+            })
+        };
+        let it = match vol {
+            Some(v) => stmt
+                .query_map([v], map)
+                .map_err(|e| CoreError::Database(format!("{e}")))?,
+            None => stmt
+                .query_map([], map)
+                .map_err(|e| CoreError::Database(format!("{e}")))?,
+        };
+        it.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CoreError::Database(format!("台账读取失败: {e}")))
+    }
+
+    /// 历史差分事件查询（只读观察域；时间倒序）。
+    pub fn history_events(&self, limit: i64) -> Result<Vec<HistoryEventRow>, CoreError> {
+        let lim = limit.clamp(1, 1000);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, ts, kind, volume_id, rel_path, detail, entity_id
+                 FROM file_events
+                 WHERE rel_path IS NOT NULL
+                 ORDER BY ts DESC, id DESC LIMIT ?1",
+            )
+            .map_err(|e| CoreError::Database(format!("事件查询失败: {e}")))?;
+        let it = stmt
+            .query_map([lim], |r| {
+                Ok(HistoryEventRow {
+                    id: r.get(0)?,
+                    ts: r.get(1)?,
+                    kind: r.get(2)?,
+                    volume_id: r.get(3)?,
+                    rel_path: r.get(4)?,
+                    detail: r.get(5)?,
+                    entity_id: r.get(6)?,
+                })
+            })
+            .map_err(|e| CoreError::Database(format!("{e}")))?;
+        it.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| CoreError::Database(format!("事件读取失败: {e}")))
     }
 }

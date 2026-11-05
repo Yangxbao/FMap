@@ -213,6 +213,14 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
         let run = || -> Result<ScanEndReason, String> {
             let db = tracenest_database::Database::open(&db_path).map_err(|e| e.to_string())?;
             let opts = tracenest_core::scanner::ScanOptions::default();
+            // 扫描范围快照（M3-B1）：与实际使用的 options/roots 一致
+            let scope = tracenest_core::scan_scope::ScanScope {
+                roots: roots_t.clone(),
+                exclude_dir_names: opts.exclude_dir_names.clone(),
+                follow_symlinks: opts.follow_symlinks,
+            };
+            db.set_scan_scope(db_scan_id, &scope)
+                .map_err(|e| e.to_string())?;
             let progress_cb = |p: ScanWriteProgress| {
                 let mut g = progress_t.lock().unwrap();
                 g.files = p.files;
@@ -231,6 +239,25 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
                 progress_cb,
             )
             .map_err(|e| e.to_string())?;
+            // 覆盖缺口清单落库（MISSING 判定豁免依据；观察域）
+            db.set_scan_coverage(db_scan_id, &summary.coverage_gaps)
+                .map_err(|e| e.to_string())?;
+            // 有效扫描完成 → 自动差分（同一连接；失败不影响扫描终态）
+            if summary.end_reason == ScanEndReason::Completed {
+                match tracenest_database::diff_pass::run_scan_diff(
+                    &db,
+                    volume_id,
+                    Some(&cancel_t),
+                    tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+                ) {
+                    Ok(ds) => eprintln!(
+                        "[FMap] 差分完成: 事件 {} (新 {} 改 {} 缺 {} 现 {}) 跳过 {} 歧义 {} 抑制 {}",
+                        ds.events_total, ds.discovered, ds.modified, ds.missing,
+                        ds.reappeared, ds.pairs_skipped, ds.ambiguous, ds.missing_suppressed
+                    ),
+                    Err(e) => eprintln!("[FMap] 差分失败（扫描数据完好）: {e}"),
+                }
+            }
             Ok(summary.end_reason)
         };
         match run() {
@@ -276,4 +303,59 @@ pub fn scan_cancel(state: State<'_, AppState>, scan_id: i64) -> CmdResult<bool> 
         .ok_or_else(|| CommandError::backend(format!("扫描任务不存在: {scan_id}")))?;
     job.cancel.store(true, Ordering::Relaxed);
     Ok(true)
+}
+
+// ==================== M3-B1：差分台账与手动差分 ====================
+
+const DB_NOT_READY: &str = "数据库未就绪";
+
+/// 差分执行台账行（历史追踪页数据源；观察域；结构在 database crate 定义）。
+pub type DiffRunRow = tracenest_database::DiffRunRow;
+
+/// 查询差分台账（volume_id 缺省 = 全部卷，按 to_scan_id 倒序）。
+#[tauri::command]
+pub fn get_diff_runs(
+    state: State<'_, AppState>,
+    volume_id: Option<i64>,
+) -> Result<Vec<DiffRunRow>, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    Ok(db.diff_runs(volume_id)?)
+}
+
+/// 历史事件行（历史追踪页数据源；只读观察域）。
+pub type HistoryEventRow = tracenest_database::HistoryEventRow;
+
+/// 查询差分事件（按时间倒序；只读观察域）。
+#[tauri::command]
+pub fn get_history_events(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<HistoryEventRow>, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    Ok(db.history_events(limit.unwrap_or(200))?)
+}
+
+/// 手动触发一个卷的差分（B1 最小：同步执行；扫描进行中会等待写锁）。
+#[tauri::command]
+pub fn run_diff_now(
+    state: State<'_, AppState>,
+    volume_id: i64,
+) -> Result<tracenest_database::diff_pass::DiffSummary, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    tracenest_database::diff_pass::run_scan_diff(
+        db,
+        volume_id,
+        None,
+        tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+    )
+    .map_err(|e| e.into())
 }

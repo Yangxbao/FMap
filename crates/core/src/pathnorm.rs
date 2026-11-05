@@ -21,6 +21,21 @@ pub fn normalize(path: &str) -> String {
     trimmed.to_uppercase()
 }
 
+/// 登记根规范化（volume.root 专用）：大写化 + 统一反斜杠 + 确保尾分隔符。
+/// 与 normalize（rel 域，'/' 分隔）分开：登记根是 Windows 原生展示形式，
+/// 存量数据（v6 前登记的 "X:\\"）与该规则兼容——不改变已有行的存储。
+pub fn normalize_root(path: &str) -> String {
+    let unified = path
+        .replace('/', chr_bs())
+        .trim_end_matches(chr_bs())
+        .to_uppercase();
+    format!("{unified}{}", chr_bs())
+}
+
+fn chr_bs() -> &'static str {
+    "\\"
+}
+
 /// 由绝对路径取其所有祖先前缀（分量边界；不含自身）。
 /// `E:/docs/proj` → ["E:", "E:/DOCS"]（已规范化）——供缺口子树匹配使用。
 pub fn ancestor_prefixes(normalized: &str) -> Vec<String> {
@@ -85,6 +100,13 @@ mod tests {
         // 关键反例：裸前缀陷阱——proj 与 project2 必须互不为祖先
         let prefixes = ancestor_prefixes("E:/PROJECT2");
         assert!(!prefixes.contains(&"E:/PROJ".to_string()));
+    }
+
+    #[test]
+    fn normalize_root_大小写斜杠与尾分隔符归一() {
+        assert_eq!(normalize_root("e:/docs"), normalize_root("E:\\DOCS\\"));
+        assert_eq!(normalize_root("E:"), normalize_root("E:/"));
+        assert_eq!(normalize_root("E:\\"), "E:\\", "盘根保持原语义");
     }
 
     #[test]

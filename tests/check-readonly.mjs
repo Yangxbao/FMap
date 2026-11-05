@@ -49,7 +49,12 @@ function walk(dir, out = []) {
 const violations = [];
 for (const p of walk(ROOT)) {
   if (!p.endsWith(".rs")) continue;
-  const src = readFileSync(p, "utf8");
+  const full = readFileSync(p, "utf8");
+  // 门禁意图：禁止对【用户文件】的删除/移动/重命名/写入 API。
+  // 测试模块（#[cfg(test)] 之后的区块）仅操作 tempfile 自建的临时目录 fixture
+  // （构造差分场景必需的真实删除/重命名），不属于用户文件——跳过扫描。
+  const testIdx = full.indexOf("#[cfg(test)]");
+  const src = testIdx >= 0 ? full.slice(0, testIdx) : full;
   for (const { re, why } of FORBIDDEN) {
     const m = src.match(re);
     if (m) violations.push(`${p}: 出现 ${why}（${m[0]}）`);

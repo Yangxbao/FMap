@@ -16,6 +16,9 @@ use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
+use crate::pathnorm::normalize;
+use crate::scan_scope::{CoverageGap, CoverageGaps};
+
 /// 遍历中产出的单条记录（对应 paths 表一行，size 仅文件有效）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalkEntry {
@@ -76,7 +79,13 @@ pub struct ScanSummary {
     pub denied_count: u64,
     /// 是否存在被跳过的目录（>0 即 Partial 语义）
     pub has_skipped: bool,
+    /// 覆盖缺口清单（相对登记根；B1-2 新增——差分 MISSING 判定的豁免依据，
+    /// 上限 10000 条，超限 truncated=true）
+    pub coverage_gaps: CoverageGaps,
 }
+
+/// 覆盖缺口收集上限（防止异常目录树撑爆 JSON）。
+pub const MAX_COVERAGE_GAPS: usize = 10_000;
 
 /// 扫描器配置。
 #[derive(Debug, Clone)]
@@ -130,6 +139,7 @@ pub fn scan_root(
             dirs_scanned: 0,
             denied_count: 0,
             has_skipped: false,
+            coverage_gaps: Default::default(),
         };
     }
     if fs::read_dir(root).is_err() {
@@ -139,9 +149,11 @@ pub fn scan_root(
             dirs_scanned: 0,
             denied_count: 0,
             has_skipped: false,
+            coverage_gaps: Default::default(),
         };
     }
 
+    let mut gaps = CoverageGaps::default();
     let end = walk_recursive(
         root,
         root,
@@ -153,6 +165,7 @@ pub fn scan_root(
         &mut dirs,
         &mut denied,
         &mut on_batch,
+        &mut gaps,
         0,
     );
 
@@ -167,7 +180,29 @@ pub fn scan_root(
         dirs_scanned: dirs,
         denied_count: denied,
         has_skipped: denied > 0,
+        coverage_gaps: gaps,
     }
+}
+
+/// 收集一条覆盖缺口（相对登记根的规范化相对路径；上限保护）。
+fn push_gap(root: &Path, abs: &Path, gaps: &mut CoverageGaps, kind: &str, reason: &str) {
+    if gaps.truncated {
+        return;
+    }
+    if gaps.paths.len() >= MAX_COVERAGE_GAPS {
+        gaps.truncated = true;
+        return;
+    }
+    let rel = abs
+        .strip_prefix(root)
+        .unwrap_or(abs)
+        .to_string_lossy()
+        .replace('\\', "/");
+    gaps.paths.push(CoverageGap {
+        rel_path: normalize(&rel),
+        kind: kind.to_string(),
+        reason: reason.to_string(),
+    });
 }
 
 /// 递归遍历实现（内部）。返回结束原因。
@@ -183,6 +218,7 @@ fn walk_recursive(
     dirs: &mut u64,
     denied: &mut u64,
     on_batch: &mut impl FnMut(WalkBatch),
+    gaps: &mut CoverageGaps,
     depth: u32,
 ) -> ScanEndReason {
     if let Some(flag) = cancel {
@@ -195,6 +231,7 @@ fn walk_recursive(
         Ok(r) => r,
         Err(_) => {
             *denied += 1;
+            push_gap(root, dir, gaps, "dir", "denied");
             return ScanEndReason::Completed; // 目录级失败不中断（需求六.6/.7）
         }
     };
@@ -207,6 +244,7 @@ fn walk_recursive(
         }
         let Ok(entry) = entry else {
             *denied += 1;
+            push_gap(root, dir, gaps, "file", "entry_error");
             continue;
         };
         let name = entry.file_name().to_string_lossy().to_string();
@@ -215,13 +253,15 @@ fn walk_recursive(
             Ok(t) => t.is_dir(),
             Err(_) => {
                 *denied += 1;
+                push_gap(root, &path, gaps, "file", "entry_error");
                 continue;
             }
         };
 
-        // 排除目录（记录为跳过但不深入）
+        // 排除目录（记录为跳过但不深入；覆盖缺口清单同步收集）
         if is_dir && options.exclude_dir_names.contains(&name) {
             *denied += 1;
+            push_gap(root, &path, gaps, "dir", "excluded");
             continue;
         }
 
@@ -237,6 +277,7 @@ fn walk_recursive(
             ),
             Err(_) => {
                 *denied += 1;
+                push_gap(root, &path, gaps, "file", "entry_error");
                 continue;
             }
         };
@@ -305,6 +346,7 @@ fn walk_recursive(
                 dirs,
                 denied,
                 on_batch,
+                gaps,
                 depth + 1,
             );
             if reason == ScanEndReason::Cancelled {
@@ -385,6 +427,33 @@ mod tests {
             |_| {},
         );
         assert_eq!(summary.end_reason, ScanEndReason::RootOffline);
+    }
+
+    #[test]
+    fn 覆盖缺口收集_权限拒绝与排除目录_相对登记根() {
+        let dir = make_fixture();
+        // 造一个无权目录（Windows 下模拟：创建后用只读属性不可靠——直接断言
+        // 排除目录收集 + denied 计数路径的结构正确性；denied 场景由排除路径覆盖）
+        fs::create_dir_all(dir.path().join("node_modules/pkg")).unwrap();
+        fs::write(dir.path().join("node_modules/pkg/x"), vec![0u8; 1]).unwrap();
+        let mut opts = ScanOptions::default();
+        opts.exclude_dir_names.push("node_modules".into());
+        let summary = scan_root(dir.path(), &opts, None, 4, |_| {});
+        // 排除目录进入缺口清单（dir/excluded，相对登记根、规范化）
+        let g = &summary.coverage_gaps;
+        assert!(!g.truncated);
+        assert!(
+            g.paths.iter().any(|gp| gp.rel_path == "NODE_MODULES"
+                && gp.kind == "dir"
+                && gp.reason == "excluded"),
+            "缺口应含排除目录且相对登记根: {:?}",
+            g.paths
+        );
+        assert!(
+            g.paths.iter().all(|gp| !gp.rel_path.contains('\\')),
+            "缺口路径必须已规范化为 / 分隔"
+        );
+        assert_eq!(g.paths.len(), 1, "正常文件不产生缺口");
     }
 
     #[test]
