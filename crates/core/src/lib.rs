@@ -5,6 +5,8 @@
 //! 只读承诺见 docs/architecture/SECURITY.md，CI 侧有 grep 门禁兜底。
 
 pub mod attribution;
+pub mod pathnorm;
+pub mod scan_scope;
 pub mod scanner;
 
 use serde::{Deserialize, Serialize};

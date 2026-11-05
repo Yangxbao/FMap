@@ -11,6 +11,7 @@
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
 
 pub mod attribution_pass;
+pub mod diff_pass;
 pub mod identity_pass;
 pub mod rules_loader;
 pub mod scan_writer;
