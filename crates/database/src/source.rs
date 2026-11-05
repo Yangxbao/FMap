@@ -49,6 +49,13 @@ pub mod event_kind {
     pub const SOURCE_CORRECTED: &str = "source_corrected";
     /// "消失 + 同 FileId 重现"的待确认标记（绝不静默改写身份）
     pub const FILE_ID_REUSE_SUSPECTED: &str = "file_id_reuse_suspected";
+
+    /// **身份域事件注册表**：撤销身份采集时删除的 kind 全集。
+    /// 规则：新增任何事件 kind 必须在此声明域归属（登记进本数组 = 身份域；
+    /// 观察域 kind 差分词表见 identity_pass::DIFF_EVENT_KINDS）——未登记的
+    /// 新 kind 会被域完备性测试（域注册表完备）拦截。
+    pub const IDENTITY_DOMAIN_KINDS: [&str; 3] =
+        [SOURCE_CONFIRMED, SOURCE_CORRECTED, FILE_ID_REUSE_SUSPECTED];
 }
 
 /// 证据语义（source_evidence.kind）。
@@ -184,16 +191,40 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("撤销删除失败: {e}")))?
                 as i64)
         };
-        // 外键顺序：先删引用方（events→evidence；candidates/confirmations→entities），
-        // 再解除 attributions.entity_id 关联，最后删实体
+        // 身份域 / 观察域分治（v6，M3-B1）：
+        // 1) 只删身份域事件（按 kind 域注册表，不按挂点）——**必须先删**：
+        //    若先解除引用，entity-only 的身份域事件会失去唯一挂点、违反表级 CHECK；
+        // 2) 再解除差分（观察域）事件的实体引用（剩余事件均有 path 挂点，安全）；
+        // 3) 删除已无引用的孤儿证据（差分事件 evidence_id=NULL，其无引用的
+        //    user_statement 证据随之清除；台账 scan_diff_runs 属观察域，完全不动）；
+        // 4) candidates/confirmations（仅身份域）全删；attributions.entity_id/volume_guid
+        //    照旧重置；最后删实体（此时已无引用）。
+        let kind_list = event_kind::IDENTITY_DOMAIN_KINDS
+            .iter()
+            .map(|k| format!("'{k}'"))
+            .collect::<Vec<_>>()
+            .join(",");
         let stats = RevokeStats {
             deleted_data: true,
-            events: count("DELETE FROM file_events")?,
+            events: count(&format!(
+                "DELETE FROM file_events WHERE kind IN ({kind_list})"
+            ))?,
             candidates: count("DELETE FROM source_candidates")?,
             confirmations: count("DELETE FROM source_confirmations")?,
-            evidence: count("DELETE FROM source_evidence")?,
+            evidence: 0,
             entities: 0,
         };
+        self.conn
+            .execute(
+                "UPDATE file_events SET entity_id=NULL WHERE entity_id IS NOT NULL",
+                [],
+            )
+            .map_err(|e| CoreError::Database(format!("解除观察事件实体引用失败: {e}")))?;
+        let mut stats = stats;
+        stats.evidence = count(
+            "DELETE FROM source_evidence WHERE id NOT IN \
+             (SELECT evidence_id FROM file_events WHERE evidence_id IS NOT NULL)",
+        )?;
         self.conn
             .execute("UPDATE attributions SET entity_id=NULL", [])
             .map_err(|e| CoreError::Database(format!("重置归属关联失败: {e}")))?;
@@ -717,6 +748,63 @@ mod tests {
             })
             .unwrap();
         assert!(guid.is_none(), "卷 GUID 应清除");
+    }
+
+    #[test]
+    fn 撤销_观察域差分事件与台账保留_身份域清除() {
+        let (db, path_id, entity_id) = seeded();
+        db.set_identity_collection_enabled(true).unwrap();
+        db.confirm_source(path_id, behavior::AI_CREATED, None)
+            .unwrap();
+        // 造观察域：台账一行 + 差分事件（path 挂点 + entity 引用 + rel_key）
+        db.conn.execute(
+            "INSERT INTO scan_diff_runs(volume_id,from_scan_id,to_scan_id,status,events_count,created_at)
+             VALUES(1,1,1,'completed',1,0)", []).unwrap();
+        let run_id: i64 = db.conn.last_insert_rowid();
+        db.conn.execute(
+            "INSERT INTO file_events(path_id,entity_id,volume_id,rel_path,rel_key,ts,kind,diff_run_id,scan_id)
+             VALUES(?1,?2,1,'report.docx','REPORT.DOCX',0,'file_discovered',?3,1)",
+            rusqlite::params![path_id, entity_id, run_id],
+        ).unwrap();
+        let diff_event_id: i64 = db.conn.last_insert_rowid();
+
+        let s = db.revoke_identity_collection(true).unwrap();
+        assert!(s.deleted_data);
+        // 观察域保留：差分事件仍在，且 entity 引用被解除（FK 安全）
+        let row: (Option<i64>, Option<i64>, String) = db
+            .conn
+            .query_row(
+                "SELECT entity_id, path_id, kind FROM file_events WHERE id=?1",
+                [diff_event_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0, None, "观察域事件 entity 引用必须解除");
+        assert_eq!(row.1, Some(path_id), "path 挂点保留");
+        assert_eq!(row.2, "file_discovered");
+        // 台账（观察域）完整保留
+        let runs: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM scan_diff_runs", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(runs, 1, "差分台账属观察域，撤销不得触碰");
+        // 身份域清除
+        let n = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            n("SELECT COUNT(*) FROM file_events WHERE kind='source_confirmed'"),
+            0
+        );
+        assert_eq!(
+            (
+                n("SELECT COUNT(*) FROM source_evidence"),
+                n("SELECT COUNT(*) FROM source_confirmations"),
+                n("SELECT COUNT(*) FROM source_candidates"),
+                n("SELECT COUNT(*) FROM file_entities")
+            ),
+            (0, 0, 0, 0)
+        );
+        assert_eq!(s.events, 1, "身份域事件删除计数");
+        assert!(s.evidence >= 1, "孤儿 user_statement 证据应被清理");
     }
 
     #[test]

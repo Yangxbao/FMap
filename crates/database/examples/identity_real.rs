@@ -37,20 +37,26 @@ fn main() {
     let p = Path::new(&path);
 
     // ---- 迁移前（只读） ----
-    let raw = Connection::open_with_flags(p, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .expect("只读打开失败");
+    let raw =
+        Connection::open_with_flags(p, OpenFlags::SQLITE_OPEN_READ_ONLY).expect("只读打开失败");
     let v_before = version(&raw);
     let c_before = counts(&raw).expect("迁移前计数失败");
     drop(raw);
-    println!("迁移前：schema v{v_before} · paths={} attributions={} tools={} volumes={}", c_before.0, c_before.1, c_before.2, c_before.3);
+    println!(
+        "迁移前：schema v{v_before} · paths={} attributions={} tools={} volumes={}",
+        c_before.0, c_before.1, c_before.2, c_before.3
+    );
 
     // ---- 迁移（Database::open 内置阶段事务） ----
     let db = tracenest_database::Database::open(p).expect("迁移失败");
-    println!("迁移后（Database::open 完成）：schema v{}", db.stats().unwrap().schema_version);
+    println!(
+        "迁移后（Database::open 完成）：schema v{}",
+        db.stats().unwrap().schema_version
+    );
 
     // ---- 迁移后（只读复核） ----
-    let raw = Connection::open_with_flags(p, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .expect("只读打开失败");
+    let raw =
+        Connection::open_with_flags(p, OpenFlags::SQLITE_OPEN_READ_ONLY).expect("只读打开失败");
     let v_after = version(&raw);
     let c_after = counts(&raw).expect("迁移后计数失败");
     let v5_tables: i64 = raw
@@ -83,12 +89,25 @@ fn main() {
             if $cond { println!("  ✅ {}", format!($($msg)*)); } else { ok = false; println!("  ❌ {}", format!($($msg)*)); }
         };
     }
-    check!(v_after == tracenest_database::SCHEMA_VERSION, "schema 版本 = v{v_after}");
+    check!(
+        v_after == tracenest_database::SCHEMA_VERSION,
+        "schema 版本 = v{v_after}"
+    );
     check!(v5_tables == 5, "v5 五表齐全");
     check!(guid_col == 1, "volumes.volume_guid 列存在");
     check!(entity_col == 1, "attributions.entity_id 列存在");
-    check!(c_after == c_before, "历史数据无损：paths {}/{} attributions {}/{} tools {}/{} volumes {}/{}",
-        c_after.0, c_before.0, c_after.1, c_before.1, c_after.2, c_before.2, c_after.3, c_before.3);
+    check!(
+        c_after == c_before,
+        "历史数据无损：paths {}/{} attributions {}/{} tools {}/{} volumes {}/{}",
+        c_after.0,
+        c_before.0,
+        c_after.1,
+        c_before.1,
+        c_after.2,
+        c_before.2,
+        c_after.3,
+        c_before.3
+    );
 
     if ok {
         println!("✅ 验收通过：v{v_before} → v{v_after} 无损迁移");

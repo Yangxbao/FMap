@@ -30,11 +30,14 @@ pub const SCHEMA_SQL: &str = include_str!("../../../tests/schema.sql");
 /// v5 增量 DDL（M3-A 文件资产基础模型：五张新表；与 tests/schema_v5.sql 同源）。
 pub const SCHEMA_V5_SQL: &str = include_str!("../../../tests/schema_v5.sql");
 
+/// v6 增量 DDL（M3-B1 基础事件追踪：差分台账 + file_events 重建；与 tests/schema_v6.sql 同源）。
+pub const SCHEMA_V6_SQL: &str = include_str!("../../../tests/schema_v6.sql");
+
 /// 内置 AI 工具规则包 v1（来源 rules/builtin-rules-v1.json，含来源与依据说明）。
 pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 6;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -202,7 +205,25 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("提交 v5 迁移失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 6 { ... }
+        // v5 → v6：**M3-B1 基础文件事件追踪**——scan_diff_runs 差分执行台账 +
+        // file_events 重建（挂点可空化、逻辑路径列、表级 CHECK、diff_run_id 关联、
+        // entity_id 去 CASCADE——观察域事件在身份撤销时保留）+ scans.scan_scope /
+        // coverage_gaps。全部在阶段事务内原子完成；版本号与 DDL 同事务。
+        if current < 6 {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v6 迁移事务失败: {e}")))?;
+            tx.execute_batch(SCHEMA_V6_SQL)
+                .map_err(|e| CoreError::Database(format!("应用 schema v6 失败: {e}")))?;
+            Self::ensure_column(&tx, "scans", "scan_scope", "TEXT")?;
+            Self::ensure_column(&tx, "scans", "coverage_gaps", "TEXT")?;
+            Self::set_schema_version(&tx, 6)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v6 迁移失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 7 { ... }
 
         let actual: i64 = self
             .conn
@@ -614,10 +635,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为5_各表为空() {
+    fn 空库初始化_版本为6_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 5);
+        assert_eq!(s.schema_version, 6);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -689,7 +710,7 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                5,
+                6,
                 "二次打开不应重复迁移"
             );
         }
@@ -729,7 +750,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            5,
+            6,
             "旧库应迁移到最新版本"
         );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
@@ -832,7 +853,7 @@ mod tests {
         }
         // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4 → v5），数据保留
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 5);
+        assert_eq!(db.stats().unwrap().schema_version, 6);
         assert_eq!(db.stats().unwrap().paths_total, 1, "崩溃恢复不得丢失数据");
         // 遗留 running（instance_id='dead' ≠ 当前实例）→ 启动恢复由调用方触发；此处仅验证列齐全
         let cols: Vec<String> = db
@@ -860,7 +881,7 @@ mod tests {
             let _db = Database::open(&p).unwrap(); // 已迁移到 v5
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 5);
+        assert_eq!(db.stats().unwrap().schema_version, 6);
     }
 
     /// 构造一个真实的 v4 库（v1 基线 + v2/v3/v4 增量列 + 样例数据），
@@ -904,7 +925,7 @@ mod tests {
         )
         .unwrap();
         raw.execute(
-            "INSERT INTO scans(started_at,status,roots,app_version) VALUES(0,'done','[\"E:\\\\\"]','0.1.0')",
+            "INSERT INTO scans(started_at,status,roots,app_version) VALUES(0,'done','[]','0.1.0')",
             [],
         )
         .unwrap();
@@ -946,7 +967,7 @@ mod tests {
         };
 
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 5);
+        assert_eq!(db.stats().unwrap().schema_version, 6);
         // 历史数据一行不少
         assert_eq!(db.stats().unwrap().paths_total, counts_before.0);
         let attr_n: i64 = db
@@ -1016,7 +1037,7 @@ mod tests {
             .unwrap();
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 5);
+        assert_eq!(db.stats().unwrap().schema_version, 6);
         // 重复建表不报错、其余四表补齐、数据保留
         let tables: i64 = db
             .conn
@@ -1029,6 +1050,192 @@ mod tests {
             .unwrap();
         assert_eq!(tables, 5, "五张 v5 表必须齐全");
         assert_eq!(db.stats().unwrap().paths_total, 2);
+    }
+
+    // ==================== v6 迁移（M3-B1）专项测试 ====================
+
+    /// 构造一个真实的 v5 库：v5 全部结构 + 身份域 file_events 事件（entity 挂点）。
+    fn make_v5_legacy_db(p: &Path) {
+        let raw = Connection::open(p).unwrap();
+        raw.execute_batch(SCHEMA_SQL).unwrap();
+        raw.execute_batch(SCHEMA_V5_SQL).unwrap();
+        // v2~v4 增量列
+        raw.execute("ALTER TABLE scans ADD COLUMN instance_id TEXT", [])
+            .unwrap();
+        raw.execute("ALTER TABLE scans ADD COLUMN end_note TEXT", [])
+            .unwrap();
+        raw.execute(
+            "ALTER TABLE rules ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1",
+            [],
+        )
+        .unwrap();
+        raw.execute("ALTER TABLE rules ADD COLUMN weight REAL", [])
+            .unwrap();
+        raw.execute("ALTER TABLE rules ADD COLUMN evidence TEXT", [])
+            .unwrap();
+        raw.execute("ALTER TABLE tools ADD COLUMN kind TEXT", [])
+            .unwrap();
+        raw.execute(
+            "ALTER TABLE attributions ADD COLUMN source_behavior TEXT NOT NULL DEFAULT 'unknown'",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO meta(key,value) VALUES('schema_version','5')",
+            [],
+        )
+        .unwrap();
+        // 样例：卷/扫描/路径/实体/工具/归属/身份域事件
+        raw.execute(
+            "INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen)
+             VALUES('E:\','文档',1,1,'NTFS',0,0)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO scans(started_at,status,roots,app_version) VALUES(0,'done','[]','0.1.0')",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO paths(volume_id,parent_id,name,depth,is_dir,size,scan_id)
+             VALUES(1,NULL,'E:',0,1,0,1),(1,1,'.codex',1,1,0,1)",
+            [],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO tools(key,name,vendor,kind,color,builtin) VALUES('codex','Codex','','cli','#111',1)",
+            [],
+        ).unwrap();
+        raw.execute(
+            "INSERT INTO file_entities(volume_id,identity_kind,file_id,check_size,check_mtime,current_path_id,first_seen_scan_id,last_seen_scan_id,first_seen_at,last_seen_at)
+             VALUES(1,'file_id',4242,0,0,2,1,1,0,0)",
+            [],
+        ).unwrap();
+        raw.execute(
+            "INSERT INTO attributions(path_id,scan_id,tool_id,confidence,score,basis,source_behavior)
+             VALUES(2,1,1,'verified',1.0,'{}','unknown')",
+            [],
+        ).unwrap();
+        // 身份域事件两条（确认 + 重用嫌疑），entity 挂点
+        raw.execute(
+            "INSERT INTO file_events(entity_id,ts,kind,evidence_id,scan_id,detail)
+             VALUES(1,100,'source_confirmed',NULL,1,'{}'),
+                   (1,200,'file_id_reuse_suspected',NULL,NULL,'{}')",
+            [],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn v5旧库迁移到v6_事件保留且台账结构可用() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("v5.db");
+        make_v5_legacy_db(&p);
+        let before: i64 = {
+            let raw = Connection::open(&p).unwrap();
+            raw.query_row("SELECT COUNT(*) FROM file_events", [], |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(before, 2, "迁移前应有 2 条身份域事件");
+
+        let db = Database::open(&p).unwrap();
+        assert_eq!(db.stats().unwrap().schema_version, 6);
+        // 事件保留 + volume 经 实体→当前路径 推导（current_path_id=2 → volume 1）
+        let rows: Vec<(i64, Option<i64>, Option<i64>, String)> = {
+            let mut stmt = db
+                .conn
+                .prepare("SELECT id, entity_id, volume_id, kind FROM file_events ORDER BY id")
+                .unwrap();
+            let it = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+                .unwrap();
+            it.collect::<Result<Vec<_>, _>>().unwrap()
+        };
+        assert_eq!(rows.len(), 2, "事件一行不少");
+        for (_, entity_id, volume_id, _kind) in &rows {
+            assert!(entity_id.is_some(), "旧身份域事件保留 entity 挂点");
+            assert_eq!(*volume_id, Some(1), "volume 应经 实体→当前路径 推导");
+        }
+        // 台账表存在且可用
+        db.conn.execute(
+            "INSERT INTO scan_diff_runs(volume_id,from_scan_id,to_scan_id,status,events_count,created_at)
+             VALUES(1,1,1,'completed',0,0)", []).unwrap();
+        // UNIQUE(volume_id, to_scan_id)
+        assert!(db.conn.execute(
+            "INSERT INTO scan_diff_runs(volume_id,from_scan_id,to_scan_id,status,events_count,created_at)
+             VALUES(1,1,1,'completed',0,0)", []).is_err(), "台账唯一约束必须生效");
+    }
+
+    #[test]
+    fn v6约束_挂点CHECK与diff_run外键与事件唯一索引() {
+        let db = mem_db();
+        let vol = db
+            .upsert_volume("X:\\", None, None, None, Some("NTFS"), false)
+            .unwrap();
+        let scan = db
+            .begin_scan(&["X:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let path_id = db
+            .insert_path(scan, vol, None, "a.txt", 1, false, 1, None, 0)
+            .unwrap();
+        db.conn.execute(
+            "INSERT INTO scan_diff_runs(volume_id,from_scan_id,to_scan_id,status,events_count,created_at)
+             VALUES(?1,?2,?2,'completed',0,0)", rusqlite::params![vol, scan]).unwrap();
+        let run_id: i64 = db.conn.last_insert_rowid();
+        // T41：双挂点皆空 → CHECK 拒绝
+        assert!(
+            db.conn
+                .execute(
+                    "INSERT INTO file_events(ts,kind) VALUES(0,'file_discovered')",
+                    []
+                )
+                .is_err(),
+            "双 NULL 挂点必须被表级 CHECK 拒绝"
+        );
+        // 差分事件：path 挂点 + volume/rel_key + diff_run 关联
+        db.conn.execute(
+            "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,diff_run_id,scan_id)
+             VALUES(?1,?2,'a.txt','A.TXT',0,'file_discovered',?3,?4)",
+            rusqlite::params![path_id, vol, run_id, scan]).unwrap();
+        // T54：不存在的 diff_run_id → FK 拒绝
+        assert!(db.conn.execute(
+            "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,diff_run_id,scan_id)
+             VALUES(?1,?2,'b.txt','B.TXT',0,'file_discovered',99999,?3)",
+            rusqlite::params![path_id, vol, scan]).is_err(), "diff_run_id 外键必须生效");
+        // 事件唯一索引：同 (kind,path_id,scan_id) 二次插入拒绝
+        assert!(db.conn.execute(
+            "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,diff_run_id,scan_id)
+             VALUES(?1,?2,'a.txt','A.TXT',1,'file_discovered',?3,?4)",
+            rusqlite::params![path_id, vol, run_id, scan]).is_err(), "事件唯一索引必须生效");
+        // path 挂点必须带 volume（CHECK 2）
+        assert!(db.conn.execute(
+            "INSERT INTO file_events(path_id,ts,kind,scan_id) VALUES(?1,0,'file_discovered',?2)",
+            rusqlite::params![path_id, scan]).is_err(), "path 挂点缺 volume 必须被 CHECK 拒绝");
+    }
+
+    #[test]
+    fn v6脏残留_临时表预存在时迁移安全收敛() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("dirty.db");
+        make_v5_legacy_db(&p);
+        {
+            let raw = Connection::open(&p).unwrap();
+            // 模拟异常残留：迁移自己的临时表名已存在（正常原子事务下不应发生）
+            raw.execute_batch("CREATE TABLE file_events_v6(id INTEGER PRIMARY KEY)")
+                .unwrap();
+        }
+        let db = Database::open(&p).unwrap();
+        assert_eq!(
+            db.stats().unwrap().schema_version,
+            6,
+            "脏残留应被 DROP IF EXISTS 清理后正常收敛"
+        );
+        let ev: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM file_events", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ev, 2, "真实数据不受脏残留清理影响");
     }
 
     #[test]
