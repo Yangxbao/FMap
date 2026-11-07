@@ -13,6 +13,7 @@ mod commands;
 mod commands_m2;
 mod commands_m3;
 mod commands_m3b;
+mod commands_m3c;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -172,6 +173,9 @@ pub fn run() {
             commands_m3::get_path_source_detail,
             commands_m3::confirm_source,
             commands_m3::revoke_source,
+            commands_m3c::run_correlation,
+            commands_m3c::get_correlation_data,
+            commands_m3c::review_correlation_candidate,
         ])
         .build(tauri::generate_context!())
         .expect("FMap 桌面应用构建失败")

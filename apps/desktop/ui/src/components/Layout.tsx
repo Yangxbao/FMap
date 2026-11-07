@@ -8,6 +8,7 @@ const NAV_ITEMS: { id: PageId; label: string; group: string; milestone: string }
   { id: "diskmap", label: "磁盘地图", group: "资产", milestone: "M1" },
   { id: "files", label: "文件浏览", group: "资产", milestone: "M1" },
   { id: "tools", label: "AI 工具", group: "AI 语义", milestone: "M2" },
+  { id: "correlation", label: "行为关联", group: "AI 语义", milestone: "C" },
   { id: "projects", label: "项目资产", group: "AI 语义", milestone: "M2" },
   { id: "history", label: "历史追踪", group: "深入", milestone: "B1" },
   { id: "monitor", label: "实时监控", group: "深入", milestone: "B2" },

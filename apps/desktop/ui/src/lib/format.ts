@@ -12,12 +12,13 @@ export function formatBytes(bytes: number | null): string {
   return `${bytes} B`;
 }
 
-/** 页面路由 id（侧栏 9 项，与用户确认的 M0-2 清单一致）。 */
+/** 页面路由 id（侧栏 10 项；M3-C 新增"行为关联"）。 */
 export const PAGE_IDS = [
   "overview",
   "diskmap",
   "files",
   "tools",
+  "correlation",
   "projects",
   "history",
   "monitor",
@@ -94,4 +95,45 @@ export function eventNote(detail: string | null): string {
   } catch {
     return "";
   }
+}
+
+// ---------- M3-C：工具行为关联 ----------
+
+/** 候选审查状态 → 中文标签。 */
+export function reviewStateLabel(s: string): string {
+  const map: Record<string, string> = {
+    pending: "待审查",
+    confirmed: "已确认关联",
+    denied: "已否认",
+    ignored: "已忽略",
+  };
+  return map[s] ?? s;
+}
+
+/** 关联置信级别 → 中文标签（绝不出现"已验证"语义）。 */
+export function corrConfidenceLabel(c: string): string {
+  const map: Record<string, string> = {
+    likely: "较强（特征文件信号）",
+    possible: "较弱（数据目录信号）",
+  };
+  return map[c] ?? c;
+}
+
+/** 信号种类 → 中文标签。 */
+export function corrSignalKindLabel(k: string): string {
+  const map: Record<string, string> = {
+    signal_path: "特征文件",
+    data_dir: "工具数据目录",
+  };
+  return map[k] ?? k;
+}
+
+/** 时间差（毫秒）→ 人类可读（"20 分钟" / "3.5 小时"）；非正数返回占位。 */
+export function fmtDelta(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms) || ms < 0) return "—";
+  const MIN = 60 * 1000;
+  if (ms < MIN) return `${ms / 1000} 秒`;
+  if (ms < 60 * MIN) return `${(ms / MIN).toFixed(0)} 分钟`;
+  if (ms < 24 * 60 * MIN) return `${(ms / (60 * MIN)).toFixed(1)} 小时`;
+  return `${(ms / (24 * 60 * MIN)).toFixed(1)} 天`;
 }

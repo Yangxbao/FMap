@@ -236,6 +236,12 @@ export const api = {
     invoke<HistoryEventRow[]>("get_history_events", { limit }),
   runDiffNow: (volumeId: number) =>
     invoke<DiffSummary>("run_diff_now", { volumeId }),
+  // M3-C 工具行为关联
+  runCorrelation: () => invoke<CorrSummary>("run_correlation"),
+  getCorrelationData: (stateFilter: string | null) =>
+    invoke<CorrelationPageData>("get_correlation_data", { stateFilter }),
+  reviewCorrelationCandidate: (candidateId: number, reviewState: string, note: string | null) =>
+    invoke<void>("review_correlation_candidate", { candidateId, reviewState, note }),
 };
 
 export interface DiffRunRow {
@@ -273,4 +279,70 @@ export interface DiffSummary {
   missing_suppressed: number;
   blocked_pair: [number, number] | null;
   error: string | null;
+}
+
+// ---------- M3-C：工具行为关联 ----------
+
+/** 单条关联证据（与 Rust CorrEvidence 对应；全部字段可审计）。 */
+export interface CorrEvidence {
+  tool_key: string;
+  /** likely = 特征文件信号；possible = 数据目录信号 */
+  level: string;
+  /** 工作区（卷根相对） */
+  workspace_rel: string;
+  signal_rel_path: string;
+  /** signal_path | data_dir */
+  signal_kind: string;
+  signal_time_ms: number;
+  file_mtime_ms: number;
+  delta_ms: number;
+  window_ms: number;
+  /** file_discovered | file_modified */
+  event_kind: string;
+}
+
+export type CorrReviewState = "pending" | "confirmed" | "denied" | "ignored";
+
+export interface CorrCandidateRow {
+  id: number;
+  event_id: number;
+  path_id: number | null;
+  tool_id: number;
+  tool_key: string;
+  tool_name: string;
+  volume_id: number;
+  volume_root: string;
+  rel_path: string;
+  state: CorrReviewState;
+  confidence: string;
+  evidence: CorrEvidence | null;
+  created_at: number;
+  reviewed_at: number | null;
+  review_note: string | null;
+}
+
+export interface CorrOverview {
+  generation: number | null;
+  last_run_at: number | null;
+  total: number;
+  pending: number;
+  confirmed: number;
+  denied: number;
+  ignored: number;
+}
+
+export interface CorrSummary {
+  signals: number;
+  targets: number;
+  attribution_count: number;
+  computed: number;
+  new_candidates: number;
+  refreshed: number;
+  stale_removed: number;
+  generation: number;
+}
+
+export interface CorrelationPageData {
+  overview: CorrOverview;
+  candidates: CorrCandidateRow[];
 }

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Layout } from "./components/Layout";
 import { Overview } from "./pages/Overview";
 import { Tools } from "./pages/Tools";
+import { Correlation } from "./pages/Correlation";
 import { DiskMap, Files, Projects, Monitor, Reports } from "./pages/Placeholders";
 import { History } from "./pages/History";
 import { Settings } from "./pages/Settings";
@@ -44,6 +45,7 @@ export function App() {
       {page === "diskmap" && <DiskMap />}
       {page === "files" && <Files />}
       {page === "tools" && <Tools />}
+      {page === "correlation" && <Correlation />}
       {page === "projects" && <Projects />}
       {page === "history" && <History />}
       {page === "monitor" && <Monitor />}

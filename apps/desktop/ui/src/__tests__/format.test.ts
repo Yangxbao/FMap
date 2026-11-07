@@ -28,8 +28,8 @@ describe("formatBytes", () => {
 });
 
 describe("hash 路由", () => {
-  it("9 个页面 id 完整", () => {
-    expect(PAGE_IDS).toHaveLength(9);
+  it("10 个页面 id 完整", () => {
+    expect(PAGE_IDS).toHaveLength(10);
   });
   it("合法与非法 hash", () => {
     expect(pageFromHash("#/overview")).toBe("overview");
