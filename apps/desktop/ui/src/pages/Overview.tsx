@@ -25,6 +25,7 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scan, setScan] = useState<ScanProgress | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [customPath, setCustomPath] = useState("");
   const pollRef = useRef<number | null>(null);
 
   const running = scan !== null && !TERMINAL.has(scan.status);
@@ -54,6 +55,8 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
     setErr(null);
     try {
       const roots = selected.size ? [...selected] : (props.volumes ?? []).map((v) => v.root);
+      if (customPath.trim()) roots.push(customPath.trim());
+      if (roots.length === 0) { setErr("请至少勾选一个磁盘或填写自定义路径"); return; }
       setScan(await api.scanStart(roots));
     } catch (e) { setErr(e instanceof IpcError ? e.message : String(e)); }
   };
@@ -70,9 +73,17 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
         ))}
         {props.volumes?.length === 0 && <span className="text-[12px] text-[#6b7075]">未发现磁盘</span>}
       </div>
+      <input
+        className="mb-2 w-full rounded border border-[#35373c] bg-[#1f2023] px-2 py-1 text-[11.5px] font-mono text-[#9aa0a6]"
+        placeholder="自定义路径（可选，如 E:\project）"
+        value={customPath}
+        onChange={(e) => setCustomPath(e.target.value)}
+        disabled={running}
+      />
       <div className="flex items-center gap-2.5">
         <button className="rounded bg-[#4cc2ff] px-3.5 py-1.5 text-[12.5px] font-semibold text-white disabled:opacity-40"
-          disabled={running} onClick={start}>{running ? "扫描中…" : "开始扫描"}</button>
+          disabled={running || (selected.size === 0 && !customPath.trim())}
+          onClick={start}>{running ? "扫描中…" : "开始扫描"}</button>
         {running && <button className="rounded border border-[#f26d6d] px-3 py-1.5 text-[12.5px] text-[#f26d6d]" onClick={cancel}>取消</button>}
       </div>
       {err && <div className="mt-2 text-[12px] text-[#f26d6d]">{err}</div>}
@@ -84,6 +95,7 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
             {scan.denied > 0 && TERMINAL.has(scan.status) ? "（部分完成：存在无权访问目录）" : ""}
           </div>
           <div className="text-[#9aa0a6]">文件 {scan.files} · 目录 {scan.dirs} · 无权/跳过 {scan.denied}</div>
+          {running && scan.phase && <div className="text-[11px] text-[#4cc2ff]">{scan.phase}</div>}
           {running && scan.current_dir && <div className="truncate font-mono text-[11px] text-[#6b7075]">{scan.current_dir}</div>}
           {scan.error && <div className="text-[12px] text-[#f26d6d]">{scan.error}</div>}
         </div>

@@ -9,8 +9,8 @@ const NAV_ITEMS: { id: PageId; label: string; group: string; milestone: string }
   { id: "files", label: "文件浏览", group: "资产", milestone: "M1" },
   { id: "tools", label: "AI 工具", group: "AI 语义", milestone: "M2" },
   { id: "projects", label: "项目资产", group: "AI 语义", milestone: "M2" },
-  { id: "history", label: "历史追踪", group: "深入", milestone: "V0.2" },
-  { id: "monitor", label: "实时监控", group: "深入", milestone: "M5" },
+  { id: "history", label: "历史追踪", group: "深入", milestone: "B1" },
+  { id: "monitor", label: "实时监控", group: "深入", milestone: "B2" },
   { id: "reports", label: "扫描报告", group: "深入", milestone: "V0.2" },
   { id: "settings", label: "设置", group: "深入", milestone: "M0" },
 ];

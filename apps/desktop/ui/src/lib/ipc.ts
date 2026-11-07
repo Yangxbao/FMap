@@ -97,6 +97,7 @@ export interface ScanProgress {
   dirs: number;
   denied: number;
   current_dir: string;
+  phase: string;
   error: string | null;
 }
 
