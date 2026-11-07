@@ -3627,6 +3627,7 @@ dependencies = [
  "tracenest-core",
  "tracenest-database",
  "tracenest-platform",
+ "windows 0.61.3",
 ]
 
 [[package]]

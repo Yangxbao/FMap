@@ -66,6 +66,9 @@ pub mod evidence_kind {
 /// 授权 meta 键：文件身份采集（M3-A 唯一隐私增量）默认关闭。
 pub const META_IDENTITY_COLLECTION: &str = "identity_collection_enabled";
 
+/// 监控缺口持久化键（M3-B2；JSON 数组，多 gap 独立 ID/水位——v6 §7.5）。
+pub const META_WATCH_GAPS_V2: &str = "watch_gaps";
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

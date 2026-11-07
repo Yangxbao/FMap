@@ -12,6 +12,7 @@
 mod commands;
 mod commands_m2;
 mod commands_m3;
+mod commands_m3b;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -24,8 +25,10 @@ use tracenest_database::Database;
 pub struct ScanJob {
     pub cancel: Arc<AtomicBool>,
     pub progress: Arc<Mutex<commands::ScanProgress>>,
-    /// 该任务对应的数据库扫描代 id（scan_writer 显式使用，消除并发错绑）
+    /// 该任务对应的数据库扫描代 id（多根扫描=首根；诊断用）
     pub db_scan_id: i64,
+    /// 全部扫描代的数据库 id（v6 多根修复：每根一个独立代）
+    pub db_scan_ids: Vec<i64>,
 }
 
 /// 应用全局状态：数据库句柄懒初始化（失败不崩溃，通过 IPC 暴露错误）。
@@ -36,6 +39,8 @@ pub struct AppState {
     pub scans: Mutex<HashMap<i64, ScanJob>>,
     /// M3-A 身份采集任务（单任务约束）
     pub backfill: Mutex<Option<commands_m3::BackfillJob>>,
+    /// M3-B2 目录监控会话（键=规范化根）
+    pub watch_handles: Mutex<Vec<commands_m3b::WatchHandle>>,
     pub next_scan_id: AtomicI64,
     /// 本实例标识（scan_start 写入 scans.instance_id，启动恢复据此判定孤儿任务）
     pub instance_id: String,
@@ -49,6 +54,7 @@ impl AppState {
             db_path: Mutex::new(None),
             scans: Mutex::new(HashMap::new()),
             backfill: Mutex::new(None),
+            watch_handles: Mutex::new(Vec::new()),
             next_scan_id: AtomicI64::new(1),
             instance_id: format!(
                 "{:x}-{:x}",
@@ -148,6 +154,14 @@ pub fn run() {
             commands::get_diff_runs,
             commands::get_history_events,
             commands::run_diff_now,
+            commands_m3b::watch_list,
+            commands_m3b::watch_add_root,
+            commands_m3b::watch_remove_root,
+            commands_m3b::watch_pause,
+            commands_m3b::watch_start,
+            commands_m3b::watch_purge_notifications,
+            commands_m3b::watch_recent_notifications,
+            commands_m3b::watch_gap_list,
             commands_m3::get_identity_settings,
             commands_m3::set_identity_collection,
             commands_m3::revoke_identity_collection,
@@ -171,6 +185,10 @@ pub fn run() {
                 }
                 if let Some(b) = state.backfill.lock().unwrap().as_ref() {
                     b.cancel.store(true, Ordering::Relaxed);
+                }
+                for w in state.watch_handles.lock().unwrap().iter() {
+                    w.cancel_flag.store(true, Ordering::Relaxed);
+                    w.cancel_event.signal();
                 }
                 eprintln!("[FMap] 退出：已请求取消全部在跑任务（扫描/身份采集）");
             }

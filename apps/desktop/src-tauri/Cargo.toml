@@ -24,3 +24,10 @@ tracenest-platform = { path = "../../../crates/platform" }
 tauri = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# M3-B2：监控取消信号（SetEvent）
+windows = { version = '0.61', features = [
+    'Win32_Foundation',
+    'Win32_System_Threading',
+] }

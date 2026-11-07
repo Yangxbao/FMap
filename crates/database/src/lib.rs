@@ -16,6 +16,7 @@ pub mod identity_pass;
 pub mod rules_loader;
 pub mod scan_writer;
 pub mod source;
+pub mod watch;
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -391,6 +392,22 @@ impl Database {
                 matches
             ))),
         }
+    }
+
+    /// 全部登记根（监控对账的卷定位用）。
+    pub fn all_volume_roots(&self) -> Vec<(i64, String)> {
+        let mut stmt = match self
+            .conn
+            .prepare("SELECT id, root FROM volumes ORDER BY id")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let it = match stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))) {
+            Ok(i) => i,
+            Err(_) => return Vec::new(),
+        };
+        it.filter_map(|r| r.ok()).collect()
     }
 
     /// 写入扫描代的范围快照（roots + 排除规则 + 符号链接策略）。

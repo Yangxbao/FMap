@@ -147,17 +147,25 @@ pub struct ScanProgress {
     pub files: u64,
     pub dirs: u64,
     pub denied: u64,
-    /// 当前正在遍历的目录（诊断用）
+    /// 当前正在遍历的目录（诊断用；带卷前缀）
     pub current_dir: String,
+    /// 多根扫描的当前阶段（如"卷 2/3（E:\\）"）
+    #[serde(default)]
+    pub phase: String,
     pub error: Option<String>,
 }
 
 #[tauri::command]
 pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<ScanProgress> {
+    spawn_scan_job(&state, roots)
+}
+
+/// 扫描任务启动的统一入口（UI 扫描与监控对账共用；v6 多根修复后的实现）。
+/// 每根一个独立扫描代 + 独立差分；聚合进度；一卷失败/取消不污染他卷。
+pub fn spawn_scan_job(state: &AppState, roots: Vec<String>) -> Result<ScanProgress, CommandError> {
     if roots.is_empty() {
         return Err(CommandError::backend("扫描根列表为空"));
     }
-    // 数据库必须就绪（扫描要写库）
     let db_path: PathBuf = state
         .db_path
         .lock()
@@ -167,17 +175,15 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
 
     let scan_id = state.next_scan_id.fetch_add(1, Ordering::Relaxed);
 
-    // 为本次扫描登记扫描代（携带实例标识）与卷（主连接）；显式取回 db_scan_id
-    let (db_scan_id, volume_id) = {
+    let volume_ids: Vec<(String, i64)> = {
         let guard = state.db.lock().unwrap();
         let db = guard
             .as_ref()
             .ok_or_else(|| CommandError::database("数据库未就绪"))?;
-        let scan_db_id = db.begin_scan(&roots, tracenest_core::APP_VERSION, db.instance_id())?;
         let volumes = tracenest_platform::create_provider()
             .list_volumes()
             .unwrap_or_default();
-        let mut volume_id: Option<i64> = None;
+        let mut out = Vec::new();
         for root in &roots {
             let v = volumes.iter().find(|v| v.root.eq_ignore_ascii_case(root));
             let id = db.upsert_volume(
@@ -188,14 +194,9 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
                 v.and_then(|v| v.fs_type.as_deref()),
                 v.map(|v| v.is_removable).unwrap_or(false),
             )?;
-            if root.eq_ignore_ascii_case(&roots[0]) {
-                volume_id = Some(id);
-            }
+            out.push((root.clone(), id));
         }
-        (
-            scan_db_id,
-            volume_id.ok_or_else(|| CommandError::database("无法登记扫描根卷"))?,
-        )
+        out
     };
 
     let cancel = Arc::new(AtomicBool::new(false));
@@ -205,65 +206,116 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
         ..Default::default()
     }));
 
-    // 后台线程：独立写连接（WAL 支持与主连接并发读）；编排逻辑在 scan_writer（可测试）
     let cancel_t = cancel.clone();
     let progress_t = progress.clone();
-    let roots_t = roots.clone();
+    let roots_v = volume_ids.clone();
     thread::spawn(move || {
         let run = || -> Result<ScanEndReason, String> {
             let db = tracenest_database::Database::open(&db_path).map_err(|e| e.to_string())?;
             let opts = tracenest_core::scanner::ScanOptions::default();
-            // 扫描范围快照（M3-B1）：与实际使用的 options/roots 一致
-            let scope = tracenest_core::scan_scope::ScanScope {
-                roots: roots_t.clone(),
-                exclude_dir_names: opts.exclude_dir_names.clone(),
-                follow_symlinks: opts.follow_symlinks,
-            };
-            db.set_scan_scope(db_scan_id, &scope)
-                .map_err(|e| e.to_string())?;
-            let progress_cb = |p: ScanWriteProgress| {
-                let mut g = progress_t.lock().unwrap();
-                g.files = p.files;
-                g.dirs = p.dirs;
-                g.denied = p.denied;
-                g.current_dir = p.current_dir;
-            };
-            let summary = run_scan_to_db(
-                &db,
-                db_scan_id,
-                volume_id,
-                Path::new(&roots_t[0]),
-                &opts,
-                Some(&cancel_t),
-                DEFAULT_BATCH_SIZE,
-                progress_cb,
-            )
-            .map_err(|e| e.to_string())?;
-            // 覆盖缺口清单落库（MISSING 判定豁免依据；观察域）
-            db.set_scan_coverage(db_scan_id, &summary.coverage_gaps)
-                .map_err(|e| e.to_string())?;
-            // 有效扫描完成 → 自动差分（同一连接；失败不影响扫描终态）
-            if summary.end_reason == ScanEndReason::Completed {
-                match tracenest_database::diff_pass::run_scan_diff(
+            let total = roots_v.len();
+            let mut files = 0u64;
+            let mut dirs = 0u64;
+            let mut denied = 0u64;
+            let mut any_failed = false;
+            let mut completed_roots = 0usize;
+            for (idx, (root, volume_id)) in roots_v.iter().enumerate() {
+                if cancel_t.load(Ordering::Relaxed) {
+                    let mut p = progress_t.lock().unwrap();
+                    p.status = "cancelled".into();
+                    return Ok(ScanEndReason::Cancelled);
+                }
+                {
+                    let mut p = progress_t.lock().unwrap();
+                    p.phase = format!("卷 {}/{}（{root}）", idx + 1, total);
+                }
+                let db_scan_id = db
+                    .begin_scan(
+                        &[root.clone()],
+                        tracenest_core::APP_VERSION,
+                        db.instance_id(),
+                    )
+                    .map_err(|e| e.to_string())?;
+                let scope = tracenest_core::scan_scope::ScanScope {
+                    roots: vec![root.clone()],
+                    exclude_dir_names: opts.exclude_dir_names.clone(),
+                    follow_symlinks: opts.follow_symlinks,
+                };
+                db.set_scan_scope(db_scan_id, &scope)
+                    .map_err(|e| e.to_string())?;
+                let progress_cb = |p: ScanWriteProgress| {
+                    let mut g = progress_t.lock().unwrap();
+                    g.files = files + p.files;
+                    g.dirs = dirs + p.dirs;
+                    g.denied = denied + p.denied;
+                    g.current_dir = format!("{root}{}", p.current_dir);
+                };
+                let summary = run_scan_to_db(
                     &db,
-                    volume_id,
+                    db_scan_id,
+                    *volume_id,
+                    Path::new(root),
+                    &opts,
                     Some(&cancel_t),
-                    tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
-                ) {
-                    Ok(ds) => eprintln!(
-                        "[FMap] 差分完成: 事件 {} (新 {} 改 {} 缺 {} 现 {}) 跳过 {} 歧义 {} 抑制 {}",
-                        ds.events_total, ds.discovered, ds.modified, ds.missing,
-                        ds.reappeared, ds.pairs_skipped, ds.ambiguous, ds.missing_suppressed
-                    ),
-                    Err(e) => eprintln!("[FMap] 差分失败（扫描数据完好）: {e}"),
+                    DEFAULT_BATCH_SIZE,
+                    progress_cb,
+                )
+                .map_err(|e| e.to_string())?;
+                db.set_scan_coverage(db_scan_id, &summary.coverage_gaps)
+                    .map_err(|e| e.to_string())?;
+                files += summary.files_scanned;
+                dirs += summary.dirs_scanned;
+                denied += summary.denied_count;
+                match summary.end_reason {
+                    ScanEndReason::Completed => {
+                        completed_roots += 1;
+                        match tracenest_database::diff_pass::run_scan_diff(
+                            &db,
+                            *volume_id,
+                            Some(&cancel_t),
+                            tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+                        ) {
+                            Ok(ds) => eprintln!(
+                                "[FMap] 差分完成（{root}）: 事件 {} (新 {} 改 {} 缺 {} 现 {}) 跳过 {} 歧义 {} 抑制 {}",
+                                ds.events_total, ds.discovered, ds.modified, ds.missing,
+                                ds.reappeared, ds.pairs_skipped, ds.ambiguous, ds.missing_suppressed
+                            ),
+                            Err(e) => eprintln!("[FMap] 差分失败（{root}，扫描数据完好）: {e}"),
+                        }
+                    }
+                    ScanEndReason::Cancelled => {
+                        let mut p = progress_t.lock().unwrap();
+                        p.status = "cancelled".into();
+                        return Ok(ScanEndReason::Cancelled);
+                    }
+                    _ => {
+                        any_failed = true;
+                    }
                 }
             }
-            Ok(summary.end_reason)
+            let mut p = progress_t.lock().unwrap();
+            if cancel_t.load(Ordering::Relaxed) {
+                p.status = "cancelled".into();
+                return Ok(ScanEndReason::Cancelled);
+            }
+            if any_failed {
+                p.status = if completed_roots > 0 {
+                    "partial".into()
+                } else {
+                    "failed".into()
+                };
+                p.error = Some("部分扫描根失败：详见扫描记录与差分台账".into());
+                return Ok(ScanEndReason::Failed);
+            }
+            p.status = "done".into();
+            Ok(ScanEndReason::Completed)
         };
         match run() {
             Ok(reason) => {
                 let mut p = progress_t.lock().unwrap();
-                p.status = reason.as_status().to_string();
+                if p.status == "running" {
+                    p.status = reason.as_status().to_string();
+                }
             }
             Err(e) => {
                 let mut p = progress_t.lock().unwrap();
@@ -273,15 +325,17 @@ pub fn scan_start(state: State<'_, AppState>, roots: Vec<String>) -> CmdResult<S
         }
     });
 
+    let first_db_scan_id = volume_ids.first().map(|(_, id)| *id).unwrap_or(0);
     state.scans.lock().unwrap().insert(
         scan_id,
         ScanJob {
             cancel,
             progress: progress.clone(),
-            db_scan_id,
+            db_scan_id: first_db_scan_id,
+            db_scan_ids: volume_ids.iter().map(|(_, id)| *id).collect(),
         },
     );
-    let p = progress.lock().unwrap().clone(); // 同 scan_status：避免临时守卫跨过局部变量 Drop
+    let p = progress.lock().unwrap().clone();
     Ok(p)
 }
 
@@ -307,7 +361,7 @@ pub fn scan_cancel(state: State<'_, AppState>, scan_id: i64) -> CmdResult<bool> 
 
 // ==================== M3-B1：差分台账与手动差分 ====================
 
-const DB_NOT_READY: &str = "数据库未就绪";
+pub const DB_NOT_READY: &str = "数据库未就绪";
 
 /// 差分执行台账行（历史追踪页数据源；观察域；结构在 database crate 定义）。
 pub type DiffRunRow = tracenest_database::DiffRunRow;
