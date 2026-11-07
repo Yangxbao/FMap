@@ -241,11 +241,11 @@ pub fn watch_start(
                 "该目录监控处于暂停状态（先恢复授权）",
             ));
         }
-        Ok(find_volume_for(db, &row.path).ok_or_else(|| {
+        find_volume_for(db, &row.path).ok_or_else(|| {
             CommandError::backend(
                 "该目录不属于任何已登记磁盘：监控可运行，但溢出后无法自动对账（需手动扫描所属磁盘）",
             )
-        })?)
+        })
     })()?;
 
     let session = WatchSession::open(&path).map_err(|e| CommandError::backend(e.to_string()))?;
