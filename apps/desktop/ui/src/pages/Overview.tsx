@@ -54,7 +54,10 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
   const start = async () => {
     setErr(null);
     try {
-      const roots = selected.size ? [...selected] : (props.volumes ?? []).map((v) => v.root);
+      // 扫描范围 = 明确勾选的磁盘 + 自定义路径（若有）。
+      // 不得回退"未选=全盘"：与按钮禁用条件（下方 disabled）保持同一语义，
+      // 否则填写自定义路径时会意外发起全盘扫描（v0.1.0 实测 bug）。
+      const roots = [...selected];
       if (customPath.trim()) roots.push(customPath.trim());
       if (roots.length === 0) { setErr("请至少勾选一个磁盘或填写自定义路径"); return; }
       setScan(await api.scanStart(roots));

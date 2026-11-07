@@ -359,6 +359,53 @@ impl Database {
                 abs_path: abs,
             });
         }
+        if out.is_empty() {
+            // FTS 中文前缀局限兜底：unicode61 分词器把连续 CJK 当整段 token，
+            // '"章"*' 匹配不到 "第三章"。FTS 零命中时回退 LIKE 子串匹配
+            // （同最新代过滤；大库全扫 ~秒级，仅兜底路径触发）。
+            let like = format!("%{}%", sanitized.replace(['%', '_'], ""));
+            let mut stmt2 = self
+                .conn
+                .prepare(
+                    "SELECT p.id, p.scan_id, p.volume_id, v.root, p.name, p.is_dir, p.size, p.mtime
+                     FROM paths p JOIN volumes v ON v.id = p.volume_id
+                     WHERE p.name LIKE ?1
+                       AND p.scan_id = (SELECT MAX(scan_id) FROM paths WHERE volume_id = p.volume_id)
+                       AND p.deleted_at IS NULL
+                     ORDER BY p.size DESC LIMIT ?2",
+                )
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            let it2 = stmt2
+                .query_map(rusqlite::params![like, lim], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, i64>(6)?,
+                        r.get::<_, Option<i64>>(7)?,
+                    ))
+                })
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            for row in it2 {
+                let (pid, scan_id, vid, vroot, name, is_dir, size, mtime) =
+                    row.map_err(|e| CoreError::Database(format!("搜索读取失败: {e}")))?;
+                let abs = self.abs_path_of(pid).unwrap_or_else(|_| vroot.clone());
+                out.push(SearchHit {
+                    path_id: pid,
+                    scan_id,
+                    volume_id: vid,
+                    volume_root: vroot,
+                    name,
+                    is_dir: is_dir != 0,
+                    size,
+                    mtime,
+                    abs_path: abs,
+                });
+            }
+        }
         Ok(out)
     }
 

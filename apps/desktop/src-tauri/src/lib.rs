@@ -94,10 +94,14 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {
-            // 初始化数据库：位置 = 系统应用数据目录（Windows: %APPDATA%）
+            // 初始化数据库：FMAP_DB_PATH 环境变量可覆盖数据库目录（便携/多实例
+            // 模式；普通用户无需设置），默认 = 系统应用数据目录（Windows: %APPDATA%\<identifier>）
             let state = app.state::<AppState>();
-            match app.path().app_data_dir() {
-                Ok(dir) => {
+            match std::env::var_os("FMAP_DB_PATH")
+                .map(PathBuf::from)
+                .or_else(|| app.path().app_data_dir().ok())
+            {
+                Some(dir) => {
                     let db_path = dir.join("tracenest.db");
                     match Database::open(&db_path) {
                         Ok(db) => {
@@ -136,8 +140,9 @@ pub fn run() {
                         }
                     }
                 }
-                Err(e) => {
-                    *state.db_error.lock().unwrap() = Some(format!("无法定位应用数据目录: {e}"));
+                None => {
+                    *state.db_error.lock().unwrap() =
+                        Some("无法定位应用数据目录".to_string());
                 }
             }
             Ok(())

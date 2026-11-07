@@ -260,12 +260,18 @@ impl Database {
             if !scope_ok.get(&a.scan_id).copied().unwrap_or(false) {
                 continue;
             }
-            // 卷根相对链（归属行的扫描根 = 登记根）
+            // 卷根相对链（归属行的扫描根 = 登记根）。
+            // 坐标系必须与 file_events.rel_path 一致（GenMap 语义：**不含**
+            // depth-0 扫描根节点名）——真实扫描的根节点名（如 "FMapDemo"）
+            // 若混入链中，路径上下文会整体失配（v0.1.1 实测修复）。
             let mut chain: Vec<String> = vec![a.name.clone()];
             let mut cur = a.parent_id;
             while let Some(pid) = cur {
                 match nodes.get(&pid) {
                     Some((p, name)) => {
+                        if p.is_none() {
+                            break; // 到达 depth-0 扫描根节点：其名不入链
+                        }
                         chain.push(name.clone());
                         cur = *p;
                     }
@@ -717,9 +723,12 @@ mod tests {
                 [],
             )
             .unwrap();
-        // 路径树：PROJ → .claude / CLAUDE.md / a.txt
+        // 路径树（真实 scan_writer 结构）：根节点(depth 0) → PROJ → .claude / CLAUDE.md / a.txt
+        let root_node = db
+            .insert_path(scan, vol, None, "E:", 0, true, 0, Some(T0), 0)
+            .unwrap();
         let proj = db
-            .insert_path(scan, vol, None, "PROJ", 0, true, 0, Some(T0), 0)
+            .insert_path(scan, vol, Some(root_node), "PROJ", 1, true, 0, Some(T0), 0)
             .unwrap();
         let claude_dir = db
             .insert_path(
