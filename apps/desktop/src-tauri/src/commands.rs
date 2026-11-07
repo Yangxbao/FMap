@@ -231,7 +231,7 @@ pub fn spawn_scan_job(state: &AppState, roots: Vec<String>) -> Result<ScanProgre
                 }
                 let db_scan_id = db
                     .begin_scan(
-                        &[root.clone()],
+                        std::slice::from_ref(root),
                         tracenest_core::APP_VERSION,
                         db.instance_id(),
                     )

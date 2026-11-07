@@ -3,8 +3,7 @@
 //! 对单个已授权目录（含子树）做 ReadDirectoryChangesW 原始通知采集。
 //! 采集层零去重；溢出句柄保持；取消通过事件句柄从阻塞等待中立即退出。
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use tracenest_core::CoreError;
 
@@ -94,12 +93,14 @@ impl WatchSession {
 
         let overlap_event = unsafe { CreateEventW(None, true, false, PCWSTR::null()) }
             .map_err(|e| WatchSignal::Fatal(CoreError::Other(format!("事件创建失败: {e}"))))?;
-        let mut overlapped = OVERLAPPED::default();
-        overlapped.hEvent = overlap_event;
+        let mut overlapped = OVERLAPPED {
+            hEvent: overlap_event,
+            ..Default::default()
+        };
 
         let mut bytes_returned: u32 = 0;
         let filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME;
-        let ok = unsafe {
+        let result = unsafe {
             ReadDirectoryChangesW(
                 self.dir_handle,
                 buffer.as_mut_ptr() as _,
@@ -111,8 +112,8 @@ impl WatchSession {
                 None,
             )
         };
-        if ok.is_err() {
-            let code = ok.unwrap_err().code();
+        if let Err(err) = result {
+            let code = err.code();
             if (code.0 & 0xFFFF) == 1022 {
                 return Err(WatchSignal::Overflow);
             }

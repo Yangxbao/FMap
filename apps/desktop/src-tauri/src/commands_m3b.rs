@@ -10,7 +10,7 @@
 //! - 关闭期间不声称完整记录（UI 硬规范）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -57,12 +57,6 @@ impl CancelEvent {
     }
 }
 
-/// 取 watcher 会话的取消事件句柄值（跨线程 signal 用）。
-fn session_cancel_event(session: &Arc<Mutex<WatchSession>>) -> isize {
-    let guard = session.lock().unwrap();
-    guard.cancel_event_handle()
-}
-
 fn handle_key(root: &str) -> String {
     pathnorm::normalize_root(root)
 }
@@ -101,7 +95,7 @@ fn find_volume_for(db: &tracenest_database::Database, watch_root: &str) -> Optio
         let base = nr.trim_end_matches('/');
         if w == base || w.starts_with(&format!("{base}/")) {
             let len = nr.len();
-            if best.as_ref().map_or(true, |b| len > b.2) {
+            if best.as_ref().is_none_or(|b| len <= b.2) {
                 best = Some((id, root, len));
             }
         }
@@ -255,17 +249,17 @@ pub fn watch_start(
     })()?;
 
     let session = WatchSession::open(&path).map_err(|e| CommandError::backend(e.to_string()))?;
-    let session = Arc::new(Mutex::new(session));
     let cancel_flag = Arc::new(AtomicBool::new(false));
     let recv_seq = Arc::new(AtomicU64::new(0));
     let persisted_seq = Arc::new(AtomicU64::new(0));
     let overflow_gen = Arc::new(AtomicU64::new(0));
     let reconcile_triggered = Arc::new(AtomicBool::new(false));
 
+    let cancel_event_val = session.cancel_event_handle();
     let handle = WatchHandle {
         root: key.clone(),
         cancel_flag: cancel_flag.clone(),
-        cancel_event: CancelEvent(session_cancel_event(&session)),
+        cancel_event: CancelEvent(cancel_event_val),
         recv_seq: recv_seq.clone(),
         persisted_seq: persisted_seq.clone(),
         overflow_gen: overflow_gen.clone(),
@@ -285,7 +279,7 @@ pub fn watch_start(
     let h = WatchHandle {
         root: key.clone(),
         cancel_flag: cancel_flag.clone(),
-        cancel_event: CancelEvent(session_cancel_event(&session)),
+        cancel_event: CancelEvent(cancel_event_val),
         recv_seq: recv_seq.clone(),
         persisted_seq: persisted_seq.clone(),
         overflow_gen: overflow_gen.clone(),
