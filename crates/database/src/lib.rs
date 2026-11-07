@@ -11,6 +11,7 @@
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
 
 pub mod attribution_pass;
+pub mod browse;
 pub mod browser;
 pub mod correlation_pass;
 pub mod diff_pass;
@@ -618,6 +619,61 @@ impl Database {
             return Ok(id);
         }
         self.upsert_volume(root, None, None, None, None, false)
+    }
+
+    /// FTS 全文索引重建（该卷 = 指定扫描代）。
+    /// 语义：该卷全部旧 FTS 行删除 → 最新代全部未删除路径写入。
+    /// 此前 paths_fts 从未被写入（schema 预留"Rust 层批量维护"未实现），
+    /// M4 文件搜索接线时补齐；失败不破坏 paths 数据（调用方决定策略）。
+    ///
+    /// 分块提交（真实库实测教训：单事务写入 ~100 万行 FTS 在 WAL 下长时间
+    /// 停滞且无 I/O 进展）——每块独立小事务，WAL 正常落盘、进度可观测、
+    /// 中断后重扫可重建（幂等：先清该卷全部旧行）。
+    pub fn fts_rebuild_for_volume(&self, volume_id: i64, scan_id: i64) -> Result<(), CoreError> {
+        {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 FTS 清理事务失败: {e}")))?;
+            tx.execute(
+                "DELETE FROM paths_fts WHERE rowid IN (SELECT id FROM paths WHERE volume_id=?1)",
+                [volume_id],
+            )
+            .map_err(|e| CoreError::Database(format!("清理旧 FTS 失败: {e}")))?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 FTS 清理失败: {e}")))?;
+        }
+        let rows: Vec<(i64, String)> = {
+            let mut reader = self
+                .conn
+                .prepare("SELECT id, name FROM paths WHERE scan_id=?1 AND deleted_at IS NULL")
+                .map_err(|e| CoreError::Database(format!("读取路径名失败: {e}")))?;
+            let it = reader
+                .query_map([scan_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| CoreError::Database(format!("读取路径名失败: {e}")))?;
+            let mut v = Vec::new();
+            for r in it {
+                v.push(r.map_err(|e| CoreError::Database(format!("读取路径名失败: {e}")))?);
+            }
+            v
+        };
+        const CHUNK: usize = 10_000;
+        for chunk in rows.chunks(CHUNK) {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 FTS 块事务失败: {e}")))?;
+            for (id, name) in chunk {
+                tx.execute(
+                    "INSERT INTO paths_fts(rowid, name) VALUES(?1, ?2)",
+                    rusqlite::params![id, name],
+                )
+                .map_err(|e| CoreError::Database(format!("写入 FTS 失败: {e}")))?;
+            }
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 FTS 块失败: {e}")))?;
+        }
+        Ok(())
     }
 
     /// 扫描完成后：目录 size = 子树聚合（自底向上单趟，按深度降序）。

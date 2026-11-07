@@ -190,11 +190,20 @@ pub fn run_scan_to_db(
     flush(db, scan_db_id, volume_id, &mut st, batch_size)?;
     // size 聚合（对已入库数据；cancelled 时明确标注非完整快照）
     db.aggregate_dir_sizes(scan_db_id)?;
+    // FTS 全文索引重建（该卷最新代；M4 搜索数据源接线）。
+    // 失败不回滚扫描：索引可下次重建，但必须在 end_note 中如实记录。
+    let fts_err: Option<String> = db
+        .fts_rebuild_for_volume(volume_id, scan_db_id)
+        .err()
+        .map(|e| e.to_string());
     // 终态写回：并发扫描时可能遇 SQLITE_BUSY，有限重试（3 次 × 2s 退避；非无限重试）
-    let end_note = if summary.end_reason == ScanEndReason::Cancelled {
-        Some("用户取消：已完成部分已保留，非完整快照")
-    } else {
-        None
+    let end_note = match (summary.end_reason == ScanEndReason::Cancelled, fts_err) {
+        (true, Some(fe)) => Some(format!(
+            "用户取消：已完成部分已保留，非完整快照；搜索索引重建失败：{fe}"
+        )),
+        (true, None) => Some("用户取消：已完成部分已保留，非完整快照".to_string()),
+        (false, Some(fe)) => Some(format!("搜索索引重建失败：{fe}")),
+        (false, None) => None,
     };
     let mut last_err: Option<CoreError> = None;
     for attempt in 0..3 {
@@ -204,7 +213,7 @@ pub fn run_scan_to_db(
             summary.files_scanned,
             summary.dirs_scanned,
             summary.denied_count,
-            end_note,
+            end_note.as_deref(),
         ) {
             Ok(()) => {
                 last_err = None;

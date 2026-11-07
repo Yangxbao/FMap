@@ -18,6 +18,7 @@ use tracenest_core::{CoreError, CoreResult};
 
 pub mod browser_downloads;
 pub mod identity;
+pub mod journal;
 pub mod watcher;
 
 /// 一个可访问的卷（磁盘/挂载根）。

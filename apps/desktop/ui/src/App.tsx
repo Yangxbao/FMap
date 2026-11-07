@@ -4,7 +4,10 @@ import { Layout } from "./components/Layout";
 import { Overview } from "./pages/Overview";
 import { Tools } from "./pages/Tools";
 import { Correlation } from "./pages/Correlation";
-import { DiskMap, Files, Projects, Monitor, Reports } from "./pages/Placeholders";
+import { DiskMap } from "./pages/DiskMap";
+import { Files } from "./pages/Files";
+import { Monitor } from "./pages/Monitor";
+import { Projects, Reports } from "./pages/Placeholders";
 import { History } from "./pages/History";
 import { Settings } from "./pages/Settings";
 import { api, backendAvailable, IpcError, type SystemStatus } from "./lib/ipc";
@@ -42,7 +45,7 @@ export function App() {
   return (
     <Layout page={page} onNavigate={navigate} app={status?.app ?? null} backendConnected={status !== null}>
       {page === "overview" && <Overview status={status} error={error} />}
-      {page === "diskmap" && <DiskMap />}
+      {page === "diskmap" && <DiskMap onNavigate={navigate} />}
       {page === "files" && <Files />}
       {page === "tools" && <Tools />}
       {page === "correlation" && <Correlation />}

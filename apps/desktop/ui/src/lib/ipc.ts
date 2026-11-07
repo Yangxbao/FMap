@@ -242,6 +242,19 @@ export const api = {
     invoke<CorrelationPageData>("get_correlation_data", { stateFilter }),
   reviewCorrelationCandidate: (candidateId: number, reviewState: string, note: string | null) =>
     invoke<void>("review_correlation_candidate", { candidateId, reviewState, note }),
+  // M3-B2 监控状态
+  watchList: () => invoke<WatchRootStatus[]>("watch_list"),
+  watchGapList: () => invoke<WatchGap[]>("watch_gap_list"),
+  watchRecentNotifications: (limit: number) =>
+    invoke<WatchNotifyRow[]>("watch_recent_notifications", { limit }),
+  // M3-E/M4
+  getMonitorData: () => invoke<MonitorPageData>("get_monitor_data"),
+  getVolumeOverviews: () => invoke<VolumeOverview[]>("get_volume_overviews"),
+  browseChildren: (parentId: number) => invoke<BrowseChild[]>("browse_children", { parentId }),
+  browseBreadcrumb: (pathId: number) => invoke<Crumb[]>("browse_breadcrumb", { pathId }),
+  searchPaths: (query: string, limit: number) => invoke<SearchHit[]>("search_paths", { query, limit }),
+  browsePathDetail: (pathId: number) => invoke<BrowsePathDetail>("browse_path_detail", { pathId }),
+  revealInExplorer: (path: string) => invoke<void>("reveal_in_explorer", { path }),
   // M3-D 浏览器下载记录
   browserListProfiles: () => invoke<BrowserProfilesResponse>("browser_list_profiles"),
   browserAuthorizeSource: (browser: string, profile: string, historyPath: string) =>
@@ -422,4 +435,121 @@ export interface DownloadRow {
   path_id: number | null;
   /** unmatched | matched */
   match_state: string;
+}
+
+// ---------- M3-E / M4：变更日志能力 + 浏览 ----------
+
+/** 单卷 USN 能力画像（真实探测；不提权）。 */
+export interface JournalCapability {
+  volume: string;
+  fs_type: string | null;
+  /** NTFS/ReFS 支持；FAT/exFAT 不支持 */
+  usn_supported_fs: boolean;
+  volume_usn: {
+    volume: string;
+    fs_type: string | null;
+    volume_usn_available: boolean;
+    denial_reason: string | null;
+  };
+  file_usn_available: boolean;
+  file_usn_error: string | null;
+}
+
+export interface MonitorPageData {
+  journal_capabilities: JournalCapability[];
+}
+
+/** 卷概览（磁盘地图页）。 */
+export interface VolumeOverview {
+  volume_id: number;
+  root: string;
+  label: string | null;
+  total_bytes: number | null;
+  free_bytes: number | null;
+  fs_type: string | null;
+  latest_scan_id: number | null;
+  latest_scan_status: string | null;
+  latest_scan_finished_at: number | null;
+  files: number;
+  dirs: number;
+  coverage_gap_count: number;
+  root_path_id: number | null;
+}
+
+export interface BrowseChild {
+  path_id: number;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mtime: number | null;
+}
+
+export interface Crumb {
+  path_id: number;
+  name: string;
+  is_root: boolean;
+}
+
+export interface SearchHit {
+  path_id: number;
+  scan_id: number;
+  volume_id: number;
+  volume_root: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mtime: number | null;
+  abs_path: string;
+}
+
+export interface BrowsePathDetail {
+  path_id: number;
+  scan_id: number;
+  volume_id: number;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  mtime: number | null;
+  ctime: number | null;
+  abs_path: string;
+  attributions: {
+    tool_key: string;
+    tool_name: string;
+    confidence: string;
+    source_behavior: string;
+  }[];
+  events: { id: number; ts: number; kind: string }[];
+}
+
+// ---------- M3-B2：目录实时监控（IPC 此前未封装，Monitor 页接线补齐） ----------
+
+export interface WatchRootStatus {
+  path: string;
+  enabled: boolean;
+  watching: boolean;
+  recv_seq: number;
+  persisted_seq: number;
+  overflow_gen: number;
+  has_open_gap: boolean;
+  volume_id: number | null;
+  reconcile_root: string | null;
+}
+
+export interface WatchNotifyRow {
+  id: number;
+  ts: number;
+  kind: string;
+  volume_id: number | null;
+  path: string;
+  watch_root: string;
+}
+
+export interface WatchGap {
+  id: string;
+  watch_root: string;
+  /** opened | closed */
+  status: string;
+  opened_at: number;
+  closed_at: number | null;
+  overflow_gen: number;
 }
