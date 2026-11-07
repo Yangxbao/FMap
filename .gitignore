@@ -30,3 +30,6 @@ Thumbs.db
 *.log
 .tmp/
 tests/fixture-tree/
+
+# 真机验收截图（含本地路径，不入库——验收证据本地留存）
+docs/evidence/
