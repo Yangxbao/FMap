@@ -9,9 +9,11 @@ jobs:
         with: { node-version: 20 }
       - uses: dtolnay/rust-toolchain@stable
       - name: Install frontend deps
-        run: npm install --prefix apps/desktop/ui
+        working-directory: apps/desktop/ui
+        run: npm ci
       - name: Build frontend
-        run: npm run build --prefix apps/desktop/ui
+        working-directory: apps/desktop/ui
+        run: npm run build
       - name: Rust tests
         run: cargo test --workspace
       - name: Clippy
@@ -19,7 +21,8 @@ jobs:
       - name: Format check
         run: cargo fmt --all -- --check
       - name: Frontend tests
-        run: npm test --prefix apps/desktop/ui
+        working-directory: apps/desktop/ui
+        run: npm test
       - name: Read-only gate
         run: node tests/check-readonly.mjs
       - name: Schema validation
