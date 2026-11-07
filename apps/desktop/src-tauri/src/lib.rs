@@ -14,6 +14,7 @@ mod commands_m2;
 mod commands_m3;
 mod commands_m3b;
 mod commands_m3c;
+mod commands_m3d;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -176,6 +177,13 @@ pub fn run() {
             commands_m3c::run_correlation,
             commands_m3c::get_correlation_data,
             commands_m3c::review_correlation_candidate,
+            commands_m3d::browser_list_profiles,
+            commands_m3d::browser_authorize_source,
+            commands_m3d::browser_revoke_source,
+            commands_m3d::browser_set_source_enabled,
+            commands_m3d::browser_purge_source_records,
+            commands_m3d::browser_import_source,
+            commands_m3d::browser_downloads_list,
         ])
         .build(tauri::generate_context!())
         .expect("FMap 桌面应用构建失败")

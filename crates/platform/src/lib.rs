@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 use tracenest_core::{CoreError, CoreResult};
 
+pub mod browser_downloads;
 pub mod identity;
 pub mod watcher;
 

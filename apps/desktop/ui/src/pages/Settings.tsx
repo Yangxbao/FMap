@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { BrowserDownloadsCard } from "../components/BrowserDownloadsCard";
 import { api, IpcError, type IdentitySettings, type RevokeStats } from "../lib/ipc";
 import { sourceBehaviorLabel } from "../lib/format";
 
@@ -176,6 +177,7 @@ export function Settings() {
       </p>
       <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
         <IdentityCollectionCard />
+        <BrowserDownloadsCard />
         <Card title="扫描范围（最终决策：所有磁盘）">
           <ToggleRow
             title="默认扫描所有磁盘"

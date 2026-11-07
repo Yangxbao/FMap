@@ -11,6 +11,7 @@
 //! - 数据库视为敏感数据：位于用户私有目录，提供清除入口（后续版本）
 
 pub mod attribution_pass;
+pub mod browser;
 pub mod correlation_pass;
 pub mod diff_pass;
 pub mod identity_pass;
@@ -39,11 +40,14 @@ pub const SCHEMA_V6_SQL: &str = include_str!("../../../tests/schema_v6.sql");
 /// v7 增量 DDL（M3-C 工具行为关联：correlation_candidates；与 tests/schema_v7.sql 同源）。
 pub const SCHEMA_V7_SQL: &str = include_str!("../../../tests/schema_v7.sql");
 
+/// v8 增量 DDL（M3-D 浏览器下载记录：授权源 + 导入记录；与 tests/schema_v8.sql 同源）。
+pub const SCHEMA_V8_SQL: &str = include_str!("../../../tests/schema_v8.sql");
+
 /// 内置 AI 工具规则包 v1（来源 rules/builtin-rules-v1.json，含来源与依据说明）。
 pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -245,7 +249,23 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("提交 v7 迁移失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 8 { ... }
+        // v7 → v8：**M3-D 浏览器下载记录**——browser_download_sources 授权表
+        //（逐浏览器 × 逐档案；无行 = 完全关闭）+ browser_downloads 导入记录
+        //（最小字段集，不含浏览上下文；候选匹配状态）。全部非破坏；
+        // 版本号与 DDL 同事务。
+        if current < 8 {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v8 迁移事务失败: {e}")))?;
+            tx.execute_batch(SCHEMA_V8_SQL)
+                .map_err(|e| CoreError::Database(format!("应用 schema v8 失败: {e}")))?;
+            Self::set_schema_version(&tx, 8)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v8 迁移失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 9 { ... }
 
         let actual: i64 = self
             .conn
@@ -747,10 +767,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为7_各表为空() {
+    fn 空库初始化_版本为8_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 7);
+        assert_eq!(s.schema_version, 8);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -822,7 +842,7 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                7,
+                8,
                 "二次打开不应重复迁移"
             );
         }
@@ -862,7 +882,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            7,
+            8,
             "旧库应迁移到最新版本"
         );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
@@ -965,7 +985,7 @@ mod tests {
         }
         // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4 → v5），数据保留
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 7);
+        assert_eq!(db.stats().unwrap().schema_version, 8);
         assert_eq!(db.stats().unwrap().paths_total, 1, "崩溃恢复不得丢失数据");
         // 遗留 running（instance_id='dead' ≠ 当前实例）→ 启动恢复由调用方触发；此处仅验证列齐全
         let cols: Vec<String> = db
@@ -993,7 +1013,7 @@ mod tests {
             let _db = Database::open(&p).unwrap(); // 已迁移到 v5
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 7);
+        assert_eq!(db.stats().unwrap().schema_version, 8);
     }
 
     /// 构造一个真实的 v4 库（v1 基线 + v2/v3/v4 增量列 + 样例数据），
@@ -1079,7 +1099,7 @@ mod tests {
         };
 
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 7);
+        assert_eq!(db.stats().unwrap().schema_version, 8);
         // 历史数据一行不少
         assert_eq!(db.stats().unwrap().paths_total, counts_before.0);
         let attr_n: i64 = db
@@ -1149,7 +1169,7 @@ mod tests {
             .unwrap();
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 7);
+        assert_eq!(db.stats().unwrap().schema_version, 8);
         // 重复建表不报错、其余四表补齐、数据保留
         let tables: i64 = db
             .conn
@@ -1353,7 +1373,7 @@ mod tests {
         assert_eq!(before, 2, "迁移前应有 2 条身份域事件");
 
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 7);
+        assert_eq!(db.stats().unwrap().schema_version, 8);
         // 事件保留 + volume 经 实体→当前路径 推导（current_path_id=2 → volume 1）
         let rows: Vec<(i64, Option<i64>, Option<i64>, String)> = {
             let mut stmt = db
@@ -1441,7 +1461,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            7,
+            8,
             "脏残留应被 DROP IF EXISTS 清理后正常收敛"
         );
         let ev: i64 = db

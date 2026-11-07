@@ -242,6 +242,20 @@ export const api = {
     invoke<CorrelationPageData>("get_correlation_data", { stateFilter }),
   reviewCorrelationCandidate: (candidateId: number, reviewState: string, note: string | null) =>
     invoke<void>("review_correlation_candidate", { candidateId, reviewState, note }),
+  // M3-D 浏览器下载记录
+  browserListProfiles: () => invoke<BrowserProfilesResponse>("browser_list_profiles"),
+  browserAuthorizeSource: (browser: string, profile: string, historyPath: string) =>
+    invoke<number>("browser_authorize_source", { browser, profile, historyPath }),
+  browserRevokeSource: (sourceId: number) =>
+    invoke<number>("browser_revoke_source", { sourceId }),
+  browserSetSourceEnabled: (sourceId: number, enabled: boolean) =>
+    invoke<boolean>("browser_set_source_enabled", { sourceId, enabled }),
+  browserPurgeSourceRecords: (sourceId: number) =>
+    invoke<number>("browser_purge_source_records", { sourceId }),
+  browserImportSource: (sourceId: number) =>
+    invoke<BrowserImportStats>("browser_import_source", { sourceId }),
+  browserDownloadsList: (sourceId: number | null, limit: number) =>
+    invoke<DownloadRow[]>("browser_downloads_list", { sourceId, limit }),
 };
 
 export interface DiffRunRow {
@@ -345,4 +359,67 @@ export interface CorrSummary {
 export interface CorrelationPageData {
   overview: CorrOverview;
   candidates: CorrCandidateRow[];
+}
+
+// ---------- M3-D：浏览器下载记录 ----------
+
+/** 浏览器档案（platform 发现结果）。 */
+export interface BrowserProfile {
+  browser: string;
+  browser_name: string;
+  profile: string;
+  history_path: string;
+  history_exists: boolean;
+}
+
+/** 授权源行。 */
+export interface BrowserSourceRow {
+  id: number;
+  browser: string;
+  profile: string;
+  history_path: string;
+  enabled: boolean;
+  added_at: number;
+  last_import_at: number | null;
+  records: number;
+  matched: number;
+}
+
+export interface BrowserProfilesResponse {
+  profiles: BrowserProfile[];
+  sources: BrowserSourceRow[];
+}
+
+/** 一次导入摘要。 */
+export interface BrowserImportStats {
+  source_id: number;
+  fetched: number;
+  inserted: number;
+  updated: number;
+  matched_total: number;
+  error: string | null;
+}
+
+/** 下载记录行（最小字段集；不含浏览上下文）。 */
+export interface DownloadRow {
+  id: number;
+  source_id: number;
+  browser: string;
+  profile: string;
+  download_id: number;
+  target_path: string;
+  url: string | null;
+  /** complete|in_progress|cancelled|interrupted|unknown */
+  state: string;
+  total_bytes: number | null;
+  received_bytes: number | null;
+  mime_type: string | null;
+  start_time: number | null;
+  end_time: number | null;
+  opened: boolean;
+  imported_at: number;
+  volume_id: number | null;
+  path_id: number | null;
+  /** unmatched | matched */
+  match_state: string;
 }
