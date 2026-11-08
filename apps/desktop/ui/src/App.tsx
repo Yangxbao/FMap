@@ -38,7 +38,11 @@ export function App() {
   }, []);
 
   const navigate = (p: PageId) => {
-    location.hash = `#/${p}`;
+    // 若调用方已设置带参数的 hash（如磁盘地图下钻 #/files?path=N），
+    // 不得覆盖抹掉参数——仅当当前 hash 不是该页时才写入。
+    if (!location.hash.startsWith(`#/${p}`)) {
+      location.hash = `#/${p}`;
+    }
     setPage(p);
   };
 

@@ -249,6 +249,111 @@ impl Database {
             .collect())
     }
 
+    /// 批量构建绝对路径（搜索结果 N+1 优化）：迭代加载 id 集合的全部祖先
+    /// 层进内存，再逐条建链——查询次数从 O(N×深度) 降为 O(祖先层数)。
+    /// 语义与 [`Self::abs_path_of`] 一致（快照：卷根 + 名称链，根节点名不入链）。
+    pub fn abs_paths_bulk(
+        &self,
+        ids: &[i64],
+    ) -> Result<std::collections::HashMap<i64, String>, CoreError> {
+        use std::collections::HashMap;
+        // 1) 迭代加载节点层（id → (parent, volume, name)）
+        let mut nodes: HashMap<i64, (Option<i64>, Option<i64>, String)> = HashMap::new();
+        let mut frontier: Vec<i64> = ids.to_vec();
+        while !frontier.is_empty() {
+            let missing: Vec<i64> = frontier
+                .iter()
+                .filter(|id| !nodes.contains_key(id))
+                .copied()
+                .collect();
+            if missing.is_empty() {
+                break;
+            }
+            let mut next_parents: Vec<i64> = Vec::new();
+            for chunk in missing.chunks(400) {
+                let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                let sql = format!(
+                    "SELECT id, parent_id, volume_id, name FROM paths WHERE id IN ({placeholders})"
+                );
+                let mut stmt = self
+                    .conn
+                    .prepare(&sql)
+                    .map_err(|e| CoreError::Database(format!("加载路径节点失败: {e}")))?;
+                let it = stmt
+                    .query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                        Ok((
+                            r.get::<_, i64>(0)?,
+                            r.get::<_, Option<i64>>(1)?,
+                            r.get::<_, Option<i64>>(2)?,
+                            r.get::<_, String>(3)?,
+                        ))
+                    })
+                    .map_err(|e| CoreError::Database(format!("加载路径节点失败: {e}")))?;
+                for row in it {
+                    let (id, parent, volume, name) =
+                        row.map_err(|e| CoreError::Database(format!("加载路径节点失败: {e}")))?;
+                    nodes.insert(id, (parent, volume, name));
+                    if let Some(p) = parent {
+                        next_parents.push(p);
+                    }
+                }
+            }
+            frontier = next_parents;
+        }
+        // 2) 卷根映射
+        let mut volume_roots: HashMap<i64, String> = HashMap::new();
+        for (_, vid, _) in nodes.values() {
+            if let Some(vid) = vid {
+                if !volume_roots.contains_key(vid) {
+                    if let Ok((id, root)) = self.conn.query_row(
+                        "SELECT id, root FROM volumes WHERE id=?1",
+                        [vid],
+                        |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+                    ) {
+                        volume_roots.insert(id, root);
+                    }
+                }
+            }
+        }
+        // 3) 逐 id 建链（内存遍历；根节点名不入链；仅对实际存在的 id 产出）
+        let mut out: HashMap<i64, String> = HashMap::new();
+        for &id in ids {
+            if !nodes.contains_key(&id) {
+                continue; // 不存在的 id 不产条目（与 abs_path_of 报错语义对齐）
+            }
+            let mut names: Vec<String> = Vec::new();
+            let mut root = String::new();
+            let mut cur = Some(id);
+            while let Some(pid) = cur {
+                match nodes.get(&pid) {
+                    Some((parent, vid, name)) => {
+                        names.push(name.clone());
+                        if let Some(vid) = vid {
+                            root = volume_roots.get(vid).cloned().unwrap_or_default();
+                            if parent.is_none() {
+                                names.pop(); // 卷根节点名不进入路径
+                                break;
+                            }
+                        }
+                        cur = *parent;
+                    }
+                    None => break,
+                }
+            }
+            names.reverse();
+            let joined = names.join("\\");
+            out.insert(
+                id,
+                if joined.is_empty() {
+                    root
+                } else {
+                    format!("{root}{joined}")
+                },
+            );
+        }
+        Ok(out)
+    }
+
     /// 由路径行构建绝对路径（快照语义：卷根 + 名称链）。
     pub fn abs_path_of(&self, path_id: i64) -> Result<String, CoreError> {
         let mut names: Vec<String> = Vec::new();
@@ -296,6 +401,13 @@ impl Database {
     }
 
     /// FTS 文件名搜索（定位到各卷最新扫描代；前缀匹配）。
+    ///
+    /// 性能设计（真实库 330 万行实测教训）：
+    /// - 「最新代」过滤用**预计算的 IN 列表**，绝不用逐行相关子查询
+    ///   （`p.scan_id = (SELECT MAX...)` 曾把 CJK 兜底拖到 15 秒）；
+    /// - 单字符查询直接走 LIKE（FTS 前缀 "a"* 需展开整本词典，曾达 15 秒）；
+    /// - FTS 命中集内层先截断（LIMIT ×4 候选池），外层 ORDER BY 不短路也能保证响应上限；
+    /// - FTS 对连续 CJK 失配（unicode61 分词）→ 零命中时回退 LIKE。
     pub fn search_paths(&self, query: &str, limit: i64) -> Result<Vec<SearchHit>, CoreError> {
         let q = query.trim();
         if q.is_empty() {
@@ -309,71 +421,81 @@ impl Database {
         if sanitized.is_empty() {
             return Ok(vec![]);
         }
-        let fts_query = format!("\"{sanitized}\"*");
         let lim = limit.clamp(1, 200);
-        // 真实库实测教训：宽前缀（如 "a"*）在 ~百万行索引上的匹配集可达数十万，
-        // 外层 ORDER BY + LIMIT 不会短路——必须**先截断 FTS 匹配集**再 join
-        // （内层子查询 LIMIT = 外层 limit × 4 的候选池），保证任意前缀的响应上限。
-        let mut stmt = self
-            .conn
-            .prepare(
-                "SELECT p.id, p.scan_id, p.volume_id, v.root, p.name, p.is_dir, p.size, p.mtime
-                 FROM (
-                   SELECT rowid FROM paths_fts WHERE paths_fts MATCH ?1 LIMIT ?2
-                 ) f
-                 JOIN paths p ON p.id = f.rowid
-                 JOIN volumes v ON v.id = p.volume_id
-                 WHERE p.scan_id = (SELECT MAX(scan_id) FROM paths WHERE volume_id = p.volume_id)
-                   AND p.deleted_at IS NULL
-                 ORDER BY p.size DESC LIMIT ?2",
-            )
-            .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
-        let it = stmt
-            .query_map(rusqlite::params![fts_query, lim], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                    r.get::<_, i64>(5)?,
-                    r.get::<_, i64>(6)?,
-                    r.get::<_, Option<i64>>(7)?,
-                ))
-            })
-            .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
-        let mut out = Vec::new();
-        for row in it {
-            let (pid, scan_id, vid, vroot, name, is_dir, size, mtime) =
-                row.map_err(|e| CoreError::Database(format!("搜索读取失败: {e}")))?;
-            let abs = self.abs_path_of(pid).unwrap_or_else(|_| vroot.clone());
-            out.push(SearchHit {
-                path_id: pid,
-                scan_id,
-                volume_id: vid,
-                volume_root: vroot,
-                name,
-                is_dir: is_dir != 0,
-                size,
-                mtime,
-                abs_path: abs,
-            });
+        // 各卷最新代 IN 列表（卷数个位数；数值来自 DB 整型列，无注入面）
+        let latest_scans: Vec<i64> = {
+            let mut stmt = self
+                .conn
+                .prepare("SELECT MAX(scan_id) FROM paths GROUP BY volume_id")
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            let it = stmt
+                .query_map([], |r| r.get::<_, Option<i64>>(0))
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            let mut v = Vec::new();
+            for r in it {
+                if let Some(id) = r.map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?
+                {
+                    v.push(id);
+                }
+            }
+            v
+        };
+        if latest_scans.is_empty() {
+            return Ok(vec![]);
         }
-        if out.is_empty() {
-            // FTS 中文前缀局限兜底：unicode61 分词器把连续 CJK 当整段 token，
-            // '"章"*' 匹配不到 "第三章"。FTS 零命中时回退 LIKE 子串匹配
-            // （同最新代过滤；大库全扫 ~秒级，仅兜底路径触发）。
+        let in_list = latest_scans
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let base_where = format!("p.scan_id IN ({in_list}) AND p.deleted_at IS NULL");
+        type SearchRawRow = (i64, i64, i64, String, String, i64, i64, Option<i64>);
+        let mut raw: Vec<SearchRawRow> = Vec::new();
+        // 单字符查询：FTS 前缀展开代价过高（词典级），直接 LIKE
+        if sanitized.chars().count() >= 2 {
+            let fts_query = format!("\"{sanitized}\"*");
+            let mut stmt = self
+                .conn
+                .prepare(&format!(
+                    "SELECT p.id, p.scan_id, p.volume_id, v.root, p.name, p.is_dir, p.size, p.mtime
+                     FROM (
+                       SELECT rowid FROM paths_fts WHERE paths_fts MATCH ?1 LIMIT ?2
+                     ) f
+                     JOIN paths p ON p.id = f.rowid
+                     JOIN volumes v ON v.id = p.volume_id
+                     WHERE {base_where}
+                     ORDER BY p.size DESC LIMIT ?2",
+                ))
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            let it = stmt
+                .query_map(rusqlite::params![fts_query, lim], |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, String>(3)?,
+                        r.get::<_, String>(4)?,
+                        r.get::<_, i64>(5)?,
+                        r.get::<_, i64>(6)?,
+                        r.get::<_, Option<i64>>(7)?,
+                    ))
+                })
+                .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
+            for row in it {
+                raw.push(row.map_err(|e| CoreError::Database(format!("搜索读取失败: {e}")))?);
+            }
+        }
+        // LIKE 兜底/直查：FTS 零命中（CJK 失配）或单字符查询
+        if raw.is_empty() {
             let like = format!("%{}%", sanitized.replace(['%', '_'], ""));
             let mut stmt2 = self
                 .conn
-                .prepare(
+                .prepare(&format!(
                     "SELECT p.id, p.scan_id, p.volume_id, v.root, p.name, p.is_dir, p.size, p.mtime
                      FROM paths p JOIN volumes v ON v.id = p.volume_id
-                     WHERE p.name LIKE ?1
-                       AND p.scan_id = (SELECT MAX(scan_id) FROM paths WHERE volume_id = p.volume_id)
-                       AND p.deleted_at IS NULL
+                     WHERE p.name LIKE ?1 AND {base_where}
                      ORDER BY p.size DESC LIMIT ?2",
-                )
+                ))
                 .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
             let it2 = stmt2
                 .query_map(rusqlite::params![like, lim], |r| {
@@ -390,21 +512,25 @@ impl Database {
                 })
                 .map_err(|e| CoreError::Database(format!("搜索失败: {e}")))?;
             for row in it2 {
-                let (pid, scan_id, vid, vroot, name, is_dir, size, mtime) =
-                    row.map_err(|e| CoreError::Database(format!("搜索读取失败: {e}")))?;
-                let abs = self.abs_path_of(pid).unwrap_or_else(|_| vroot.clone());
-                out.push(SearchHit {
-                    path_id: pid,
-                    scan_id,
-                    volume_id: vid,
-                    volume_root: vroot,
-                    name,
-                    is_dir: is_dir != 0,
-                    size,
-                    mtime,
-                    abs_path: abs,
-                });
+                raw.push(row.map_err(|e| CoreError::Database(format!("搜索读取失败: {e}")))?);
             }
+        }
+        let ids: Vec<i64> = raw.iter().map(|r| r.0).collect();
+        let abs_map = self.abs_paths_bulk(&ids).unwrap_or_default();
+        let mut out = Vec::new();
+        for (pid, scan_id, vid, vroot, name, is_dir, size, mtime) in raw {
+            let abs = abs_map.get(&pid).cloned().unwrap_or_else(|| vroot.clone());
+            out.push(SearchHit {
+                path_id: pid,
+                scan_id,
+                volume_id: vid,
+                volume_root: vroot,
+                name,
+                is_dir: is_dir != 0,
+                size,
+                mtime,
+                abs_path: abs,
+            });
         }
         Ok(out)
     }
@@ -608,6 +734,21 @@ mod tests {
         assert_eq!(crumbs.len(), 2);
         assert!(crumbs[0].is_root);
         assert_eq!(crumbs[1].name, "报告.docx");
+    }
+
+    #[test]
+    fn 批量绝对路径_与单个一致_根节点与深层混合() {
+        let db = mem_db();
+        let (_vol, _scan, root, doc) = seed(&db);
+        // PROJ 的 id（根下第一个目录）
+        let proj = db.browse_children(root).unwrap()[0].path_id;
+        let map = db.abs_paths_bulk(&[doc, root, proj, 999999]).unwrap();
+        assert_eq!(map.get(&doc).unwrap(), "E:\\报告.docx");
+        assert_eq!(map.get(&root).unwrap(), "E:\\", "根节点 → 纯卷根");
+        assert_eq!(map.get(&proj).unwrap(), "E:\\PROJ");
+        assert!(!map.contains_key(&999999), "不存在的 id 不产条目");
+        // 与单个版语义一致
+        assert_eq!(map.get(&doc).unwrap(), &db.abs_path_of(doc).unwrap());
     }
 
     #[test]

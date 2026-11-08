@@ -229,11 +229,14 @@ export const api = {
     invoke<EffectiveSource>("confirm_source", { pathId, behavior, note }),
   revokeSource: (pathId: number, note: string | null) =>
     invoke<EffectiveSource>("revoke_source", { pathId, note }),
-  // M3-B1 历史追踪
+  // M3-B1 历史追踪（v2：分页+过滤+搜索；超限处置）
+  getHistoryEvents: (volumeId: number | null, search: string | null, limit: number, offset: number) =>
+    invoke<HistoryEventsPage>("get_history_events", { volumeId, search, limit, offset }),
+  diffRaiseLimit: (newMax: number) => invoke<number>("diff_raise_limit", { newMax }),
+  diffAbandonPair: (runId: number, note: string) =>
+    invoke<boolean>("diff_abandon_pair", { runId, note }),
   getDiffRuns: (volumeId: number | null) =>
     invoke<DiffRunRow[]>("get_diff_runs", { volumeId }),
-  getHistoryEvents: (limit: number) =>
-    invoke<HistoryEventRow[]>("get_history_events", { limit }),
   runDiffNow: (volumeId: number) =>
     invoke<DiffSummary>("run_diff_now", { volumeId }),
   // M3-C 工具行为关联
@@ -552,4 +555,11 @@ export interface WatchGap {
   opened_at: number;
   closed_at: number | null;
   overflow_gen: number;
+}
+
+// ---------- M5：历史事件分页 ----------
+
+export interface HistoryEventsPage {
+  rows: HistoryEventRow[];
+  total: number;
 }

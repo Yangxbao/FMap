@@ -75,7 +75,7 @@ fn main() {
         "迁移后：schema v{} · paths {} · 表（含 v7 关联候选 + v8 下载记录）",
         stats.schema_version, stats.paths_total
     );
-    assert_eq!(stats.schema_version, 8, "应迁移到 v8");
+    assert_eq!(stats.schema_version, 9, "应迁移到 v9");
     assert_eq!(stats.paths_total, before.0, "迁移不得丢失任何 paths 行");
 
     // 4) 卷概览
@@ -120,5 +120,37 @@ fn main() {
         );
     }
 
-    println!("结果：PASS（v6→v8 真实迁移 + 浏览查询 + FTS 搜索）");
+    println!("结果：PASS（v6→v9 真实迁移 + 浏览查询 + FTS 搜索）");
+
+    // 7) M5 完善轮抽查：历史分页 + 宽前缀截断 + 中文兜底（只输出计数与耗时）
+    let t0 = std::time::Instant::now();
+    let (rows, total) = db
+        .history_events_paged(None, None, 100, 0)
+        .expect("历史分页查询应成功");
+    println!(
+        "历史分页：total={} 本页={} 耗时 {:?}",
+        total,
+        rows.len(),
+        t0.elapsed()
+    );
+    let t1 = std::time::Instant::now();
+    let (_, total_f) = db
+        .history_events_paged(None, Some("usr"), 100, 0)
+        .expect("历史搜索应成功");
+    println!("历史搜索 'usr'：total={} 耗时 {:?}", total_f, t1.elapsed());
+    let t2 = std::time::Instant::now();
+    let broad = db.search_paths("a", 20).expect("宽前缀搜索应成功");
+    println!(
+        "宽前缀 'a'*（内层截断）：返回 {} 条（上限截断生效）耗时 {:?}",
+        broad.len(),
+        t2.elapsed()
+    );
+    let t3 = std::time::Instant::now();
+    let cjk = db.search_paths("文", 20).expect("CJK 兜底搜索应成功");
+    println!(
+        "CJK 兜底 '文'：返回 {} 条 耗时 {:?}",
+        cjk.len(),
+        t3.elapsed()
+    );
+    println!("M5 抽查：PASS");
 }

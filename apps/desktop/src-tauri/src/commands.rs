@@ -136,6 +136,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tracenest_core::scanner::ScanEndReason;
+use tracenest_database::diff_pass;
 use tracenest_database::scan_writer::{run_scan_to_db, ScanWriteProgress, DEFAULT_BATCH_SIZE};
 
 /// 前端可见的扫描进度（scan_status 的返回体）。
@@ -273,7 +274,7 @@ pub fn spawn_scan_job(state: &AppState, roots: Vec<String>) -> Result<ScanProgre
                             &db,
                             *volume_id,
                             Some(&cancel_t),
-                            tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+                            tracenest_database::diff_pass::configured_max_diff_events(&db),
                         ) {
                             Ok(ds) => eprintln!(
                                 "[FMap] 差分完成（{root}）: 事件 {} (新 {} 改 {} 缺 {} 现 {}) 跳过 {} 歧义 {} 抑制 {}",
@@ -382,17 +383,57 @@ pub fn get_diff_runs(
 /// 历史事件行（历史追踪页数据源；只读观察域）。
 pub type HistoryEventRow = tracenest_database::HistoryEventRow;
 
-/// 查询差分事件（按时间倒序；只读观察域）。
+/// 查询差分事件（v2：分页 + 卷过滤 + 路径子串搜索；只读观察域）。
+#[derive(serde::Serialize)]
+pub struct HistoryEventsPage {
+    pub rows: Vec<HistoryEventRow>,
+    pub total: i64,
+}
+
 #[tauri::command]
 pub fn get_history_events(
     state: State<'_, AppState>,
+    volume_id: Option<i64>,
+    search: Option<String>,
     limit: Option<i64>,
-) -> Result<Vec<HistoryEventRow>, CommandError> {
+    offset: Option<i64>,
+) -> Result<HistoryEventsPage, CommandError> {
     let guard = state.db.lock().unwrap();
     let db = guard
         .as_ref()
         .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
-    Ok(db.history_events(limit.unwrap_or(200))?)
+    let (rows, total) = db.history_events_paged(
+        volume_id,
+        search.as_deref(),
+        limit.unwrap_or(100),
+        offset.unwrap_or(0),
+    )?;
+    Ok(HistoryEventsPage { rows, total })
+}
+
+/// 处置一：人工提高差分事件上限（pending_over_limit 对自动重试）。
+#[tauri::command]
+pub fn diff_raise_limit(state: State<'_, AppState>, new_max: i64) -> Result<i64, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    let new_max = new_max.max(0) as usize;
+    Ok(diff_pass::diff_raise_limit(db, new_max)? as i64)
+}
+
+/// 处置二：人工确认放弃一个被阻塞的差分对。
+#[tauri::command]
+pub fn diff_abandon_pair(
+    state: State<'_, AppState>,
+    run_id: i64,
+    note: String,
+) -> Result<bool, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    Ok(diff_pass::diff_abandon_pair(db, run_id, &note)?)
 }
 
 /// 手动触发一个卷的差分（B1 最小：同步执行；扫描进行中会等待写锁）。
@@ -409,7 +450,7 @@ pub fn run_diff_now(
         db,
         volume_id,
         None,
-        tracenest_database::diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+        tracenest_database::diff_pass::configured_max_diff_events(db),
     )
     .map_err(|e| e.into())
 }

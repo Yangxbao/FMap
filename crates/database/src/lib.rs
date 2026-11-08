@@ -44,11 +44,14 @@ pub const SCHEMA_V7_SQL: &str = include_str!("../../../tests/schema_v7.sql");
 /// v8 增量 DDL（M3-D 浏览器下载记录：授权源 + 导入记录；与 tests/schema_v8.sql 同源）。
 pub const SCHEMA_V8_SQL: &str = include_str!("../../../tests/schema_v8.sql");
 
+/// v9 增量 DDL（M5 性能：全局查询索引；与 tests/schema_v9.sql 同源）。
+pub const SCHEMA_V9_SQL: &str = include_str!("../../../tests/schema_v9.sql");
+
 /// 内置 AI 工具规则包 v1（来源 rules/builtin-rules-v1.json，含来源与依据说明）。
 pub const BUILTIN_RULES_JSON: &str = include_str!("../../../rules/builtin-rules-v1.json");
 
 /// 当前期望的 schema 版本号。每次结构变更 +1 并补充迁移分支。
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 
 /// 数据库句柄。非 Clone：应用状态中以 Mutex 持有。
 pub struct Database {
@@ -266,7 +269,22 @@ impl Database {
                 .map_err(|e| CoreError::Database(format!("提交 v8 迁移失败: {e}")))?;
         }
 
-        // 未来版本在此追加 if current < 9 { ... }
+        // v8 → v9：**M5 性能完善**——补全局查询索引（file_events 时间线 /
+        // 关联候选 / 下载记录浏览），全部 CREATE INDEX IF NOT EXISTS 非破坏；
+        // 版本号与 DDL 同事务。
+        if current < 9 {
+            let tx = self
+                .conn
+                .unchecked_transaction()
+                .map_err(|e| CoreError::Database(format!("开启 v9 迁移事务失败: {e}")))?;
+            tx.execute_batch(SCHEMA_V9_SQL)
+                .map_err(|e| CoreError::Database(format!("应用 schema v9 失败: {e}")))?;
+            Self::set_schema_version(&tx, 9)?;
+            tx.commit()
+                .map_err(|e| CoreError::Database(format!("提交 v9 迁移失败: {e}")))?;
+        }
+
+        // 未来版本在此追加 if current < 10 { ... }
 
         let actual: i64 = self
             .conn
@@ -823,10 +841,10 @@ mod tests {
     }
 
     #[test]
-    fn 空库初始化_版本为8_各表为空() {
+    fn 空库初始化_版本为9_各表为空() {
         let db = mem_db();
         let s = db.stats().expect("stats 应成功");
-        assert_eq!(s.schema_version, 8);
+        assert_eq!(s.schema_version, 9);
         assert_eq!(s.volumes, 0);
         assert_eq!(s.scans_total, 0);
         assert_eq!(s.paths_total, 0);
@@ -898,7 +916,7 @@ mod tests {
             let db = Database::open(&p).unwrap();
             assert_eq!(
                 db.stats().unwrap().schema_version,
-                8,
+                9,
                 "二次打开不应重复迁移"
             );
         }
@@ -938,7 +956,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            8,
+            9,
             "旧库应迁移到最新版本"
         );
         assert_eq!(db.stats().unwrap().paths_total, 1, "迁移不得丢失 paths");
@@ -1041,7 +1059,7 @@ mod tests {
         }
         // 崩溃后重新打开：应安全续跑（补 end_note → v3 → v4 → v5），数据保留
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 8);
+        assert_eq!(db.stats().unwrap().schema_version, 9);
         assert_eq!(db.stats().unwrap().paths_total, 1, "崩溃恢复不得丢失数据");
         // 遗留 running（instance_id='dead' ≠ 当前实例）→ 启动恢复由调用方触发；此处仅验证列齐全
         let cols: Vec<String> = db
@@ -1069,7 +1087,7 @@ mod tests {
             let _db = Database::open(&p).unwrap(); // 已迁移到 v5
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 8);
+        assert_eq!(db.stats().unwrap().schema_version, 9);
     }
 
     /// 构造一个真实的 v4 库（v1 基线 + v2/v3/v4 增量列 + 样例数据），
@@ -1155,7 +1173,7 @@ mod tests {
         };
 
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 8);
+        assert_eq!(db.stats().unwrap().schema_version, 9);
         // 历史数据一行不少
         assert_eq!(db.stats().unwrap().paths_total, counts_before.0);
         let attr_n: i64 = db
@@ -1225,7 +1243,7 @@ mod tests {
             .unwrap();
         }
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 8);
+        assert_eq!(db.stats().unwrap().schema_version, 9);
         // 重复建表不报错、其余四表补齐、数据保留
         let tables: i64 = db
             .conn
@@ -1303,6 +1321,144 @@ mod tests {
             let in_observation = kinds::ALL.contains(&k);
             assert!(in_identity || in_observation, "kind {k} 未登记任何域");
         }
+    }
+
+    // ==================== M5 完善轮：历史分页 / 超限处置 ====================
+
+    /// 种子：1 卷 3 条差分事件（挂点齐全：path_id + volume_id + scan_id）。
+    fn seed_history(db: &Database) -> (i64, i64) {
+        let vol = db
+            .upsert_volume("E:\\", None, None, None, None, false)
+            .unwrap();
+        let scan = db
+            .begin_scan(&["E:\\".into()], "t", db.instance_id())
+            .unwrap();
+        for (i, (rel, kind)) in [
+            ("a.txt", "file_discovered"),
+            ("b.txt", "file_modified"),
+            ("c.txt", "file_discovered"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let pid = db
+                .insert_path(scan, vol, None, rel, 1, false, i as u64, Some(0), 0)
+                .unwrap();
+            db.conn
+                .execute(
+                    "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,scan_id,detail)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7,'{}')",
+                    rusqlite::params![pid, vol, rel, rel.to_uppercase(), 1000 + i as i64, kind, scan],
+                )
+                .unwrap();
+        }
+        (vol, scan)
+    }
+
+    #[test]
+    fn t60_历史事件分页_卷过滤_路径搜索() {
+        let db = mem_db();
+        let (vol, _) = seed_history(&db);
+        // 全量：3 条，total=3
+        let (rows, total) = db.history_events_paged(None, None, 100, 0).unwrap();
+        assert_eq!((rows.len(), total), (3, 3));
+        assert_eq!(rows[0].rel_path.as_deref(), Some("c.txt"), "时间倒序");
+        // 分页：limit 2 offset 1 → total=3，2 行
+        let (rows, total) = db.history_events_paged(None, None, 2, 1).unwrap();
+        assert_eq!((rows.len(), total), (2, 3));
+        assert_eq!(rows[0].rel_path.as_deref(), Some("b.txt"));
+        // 搜索：'b' → 1 条
+        let (rows, total) = db.history_events_paged(None, Some("b"), 100, 0).unwrap();
+        assert_eq!((rows.len(), total), (1, 1));
+        assert_eq!(rows[0].rel_path.as_deref(), Some("b.txt"));
+        // 卷过滤：vol1 → 3 条；不存在卷 → 0 条
+        let (_, total) = db.history_events_paged(Some(vol), None, 100, 0).unwrap();
+        assert_eq!(total, 3);
+        let (_, total) = db.history_events_paged(Some(9999), None, 100, 0).unwrap();
+        assert_eq!(total, 0);
+        // LIKE 通配符在搜索词中被剥离（防误匹配）
+        let (_, total) = db.history_events_paged(None, Some("%"), 100, 0).unwrap();
+        assert_eq!(total, 0, "'%' 应被剥离而非当通配符");
+    }
+
+    #[test]
+    fn t61_差分上限可配置与非法值回退() {
+        let db = mem_db();
+        assert_eq!(
+            diff_pass::configured_max_diff_events(&db),
+            diff_pass::DEFAULT_MAX_DIFF_EVENTS,
+            "默认 = 常量"
+        );
+        // 合法提升
+        let eff = diff_pass::diff_raise_limit(&db, 80_000).unwrap();
+        assert_eq!(eff, 80_000);
+        assert_eq!(diff_pass::configured_max_diff_events(&db), 80_000);
+        // 非法值拒绝
+        assert!(diff_pass::diff_raise_limit(&db, 10).is_err());
+        assert!(diff_pass::diff_raise_limit(&db, 99_999_999).is_err());
+        // 越界存量值回退默认（配置损坏不得瘫痪差分）
+        db.set_meta(diff_pass::META_DIFF_MAX_EVENTS, "5").unwrap();
+        assert_eq!(
+            diff_pass::configured_max_diff_events(&db),
+            diff_pass::DEFAULT_MAX_DIFF_EVENTS
+        );
+    }
+
+    #[test]
+    fn t62_差分对放弃_仅pending可转_方向合法() {
+        let db = mem_db();
+        let vol = db
+            .upsert_volume("E:\\", None, None, None, None, false)
+            .unwrap();
+        let s1 = db
+            .begin_scan(&["E:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let s2 = db
+            .begin_scan(&["E:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let s3 = db
+            .begin_scan(&["E:\\".into()], "t", db.instance_id())
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO scan_diff_runs(volume_id,from_scan_id,to_scan_id,status,events_count,created_at,skip_reason)
+                 VALUES(?1,?2,?3,'pending_over_limit',0,0,'差分事件 99999/50000 超过上限'),
+                       (?1,?3,?4,'completed',5,0,NULL)",
+                rusqlite::params![vol, s1, s2, s3],
+            )
+            .unwrap();
+        let pending_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM scan_diff_runs WHERE status='pending_over_limit'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        // 放弃 pending 行 → skipped_over_limit + 原因
+        assert!(diff_pass::diff_abandon_pair(&db, pending_id, "误报，确认放弃").unwrap());
+        let (st, reason): (String, String) = db
+            .conn
+            .query_row(
+                "SELECT status, skip_reason FROM scan_diff_runs WHERE id=?1",
+                [pending_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(st, "skipped_over_limit");
+        assert!(reason.contains("人工确认放弃"));
+        // 已处理行不可再放弃（append-only 方向保护）
+        let completed_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM scan_diff_runs WHERE status='completed'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(!diff_pass::diff_abandon_pair(&db, completed_id, "x").unwrap());
+        // 不存在的 id → false（不伪装成功）
+        assert!(!diff_pass::diff_abandon_pair(&db, 99999, "x").unwrap());
     }
 
     #[test]
@@ -1429,7 +1585,7 @@ mod tests {
         assert_eq!(before, 2, "迁移前应有 2 条身份域事件");
 
         let db = Database::open(&p).unwrap();
-        assert_eq!(db.stats().unwrap().schema_version, 8);
+        assert_eq!(db.stats().unwrap().schema_version, 9);
         // 事件保留 + volume 经 实体→当前路径 推导（current_path_id=2 → volume 1）
         let rows: Vec<(i64, Option<i64>, Option<i64>, String)> = {
             let mut stmt = db
@@ -1517,7 +1673,7 @@ mod tests {
         let db = Database::open(&p).unwrap();
         assert_eq!(
             db.stats().unwrap().schema_version,
-            8,
+            9,
             "脏残留应被 DROP IF EXISTS 清理后正常收敛"
         );
         let ev: i64 = db
@@ -1633,32 +1789,87 @@ impl Database {
             .map_err(|e| CoreError::Database(format!("台账读取失败: {e}")))
     }
 
-    /// 历史差分事件查询（只读观察域；时间倒序）。
-    pub fn history_events(&self, limit: i64) -> Result<Vec<HistoryEventRow>, CoreError> {
-        let lim = limit.clamp(1, 1000);
+    /// 历史差分事件查询 v2（只读观察域；时间倒序 + 分页 + 卷过滤 + 路径子串搜索）。
+    /// 返回 (当前页行, 满足条件的总数)——总数供前端分页控件使用。
+    /// search 匹配 rel_path 子串（LIKE，ASCII 大小写不敏感；空串/None = 不过滤）。
+    #[allow(clippy::type_complexity)]
+    pub fn history_events_paged(
+        &self,
+        volume_id: Option<i64>,
+        search: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<HistoryEventRow>, i64), CoreError> {
+        let lim = limit.clamp(1, 500);
+        let off = offset.max(0);
+        let search_term = search
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            // LIKE 通配符按字面匹配（ESCAPE '#'——路径中不出现 '#'，避开
+            // Rust/SQL 双层反斜杠转义；搜索 "50%" 不会变成"50任意"）
+            .map(|s| {
+                format!(
+                    "%{}%",
+                    s.replace('#', "##").replace('%', "#%").replace('_', "#_")
+                )
+            });
+        // 条件拼装（占位符按出现顺序绑定：volume → search）
+        let mut conds: Vec<String> = vec!["rel_path IS NOT NULL".into()];
+        if volume_id.is_some() {
+            conds.push("volume_id=?".into());
+        }
+        if search_term.is_some() {
+            conds.push("rel_path LIKE ? ESCAPE '#'".into());
+        }
+        let where_sql = conds.join(" AND ");
+        let total: i64 = {
+            let sql = format!("SELECT COUNT(*) FROM file_events WHERE {where_sql}");
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| CoreError::Database(format!("事件计数失败: {e}")))?;
+            match (&volume_id, &search_term) {
+                (Some(v), Some(s)) => stmt.query_row(rusqlite::params![v, s], |r| r.get(0)),
+                (Some(v), None) => stmt.query_row([v], |r| r.get(0)),
+                (None, Some(s)) => stmt.query_row([s], |r| r.get(0)),
+                (None, None) => stmt.query_row([], |r| r.get(0)),
+            }
+            .map_err(|e| CoreError::Database(format!("事件计数失败: {e}")))?
+        };
+        let sql = format!(
+            "SELECT id, ts, kind, volume_id, rel_path, detail, entity_id
+             FROM file_events WHERE {where_sql}
+             ORDER BY ts DESC, id DESC LIMIT {} OFFSET {}",
+            lim, off
+        );
         let mut stmt = self
             .conn
-            .prepare(
-                "SELECT id, ts, kind, volume_id, rel_path, detail, entity_id
-                 FROM file_events
-                 WHERE rel_path IS NOT NULL
-                 ORDER BY ts DESC, id DESC LIMIT ?1",
-            )
+            .prepare(&sql)
             .map_err(|e| CoreError::Database(format!("事件查询失败: {e}")))?;
-        let it = stmt
-            .query_map([lim], |r| {
-                Ok(HistoryEventRow {
-                    id: r.get(0)?,
-                    ts: r.get(1)?,
-                    kind: r.get(2)?,
-                    volume_id: r.get(3)?,
-                    rel_path: r.get(4)?,
-                    detail: r.get(5)?,
-                    entity_id: r.get(6)?,
-                })
-            })
-            .map_err(|e| CoreError::Database(format!("{e}")))?;
-        it.collect::<Result<Vec<_>, _>>()
-            .map_err(|e| CoreError::Database(format!("事件读取失败: {e}")))
+        let it = match (&volume_id, &search_term) {
+            (Some(v), Some(s)) => stmt.query_map(rusqlite::params![v, s], map_event_row),
+            (Some(v), None) => stmt.query_map([v], map_event_row),
+            (None, Some(s)) => stmt.query_map([s], map_event_row),
+            (None, None) => stmt.query_map([], map_event_row),
+        }
+        .map_err(|e| CoreError::Database(format!("事件查询失败: {e}")))?;
+        let mut out = Vec::new();
+        for r in it {
+            out.push(r.map_err(|e| CoreError::Database(format!("事件读取失败: {e}")))?);
+        }
+        Ok((out, total))
     }
+}
+
+/// 事件行映射（history_events_paged 用）。
+fn map_event_row(r: &rusqlite::Row) -> rusqlite::Result<HistoryEventRow> {
+    Ok(HistoryEventRow {
+        id: r.get(0)?,
+        ts: r.get(1)?,
+        kind: r.get(2)?,
+        volume_id: r.get(3)?,
+        rel_path: r.get(4)?,
+        detail: r.get(5)?,
+        entity_id: r.get(6)?,
+    })
 }

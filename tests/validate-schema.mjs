@@ -18,6 +18,7 @@ const ddl = [
   readFileSync(join(HERE, "schema_v6.sql"), "utf8"),
   readFileSync(join(HERE, "schema_v7.sql"), "utf8"),
   readFileSync(join(HERE, "schema_v8.sql"), "utf8"),
+  readFileSync(join(HERE, "schema_v9.sql"), "utf8"),
 ].join("\n");
 
 const db = new DatabaseSync(":memory:");
@@ -60,7 +61,7 @@ try {
   }
 
   // 冒烟：v1 基础读写
-  db.exec("INSERT INTO meta(key,value) VALUES('schema_version','8')");
+  db.exec("INSERT INTO meta(key,value) VALUES('schema_version','9')");
   db.exec("INSERT INTO volumes(root,label,total_bytes,free_bytes,fs_type,is_removable,first_seen,volume_guid) VALUES('C:\\','系统',199,62,'NTFS',0,0,'\\\\?\\Volume{11111111-2222-3333-4444-555555555555}')");
   db.exec("INSERT INTO scans(started_at,status,roots,app_version,scan_scope,coverage_gaps) VALUES(0,'done','[\"C:\\\\\"]','0.1.0','{\"roots\":[\"C:\\\\\"],\"exclude_dir_names\":[],\"follow_symlinks\":false}','{\"paths\":[],\"truncated\":false}')");
   const scanId = db.prepare("SELECT id FROM scans").get().id;
@@ -99,8 +100,8 @@ try {
   } catch { dupEventRejected = true; }
   if (!dupEventRejected) { console.error("❌ 事件唯一索引 (kind,path_id,scan_id) 未生效"); process.exit(1); }
 
-  console.log("✅ Schema 验证通过（v1 基线 + v5 + v6 + v7 + v8 + 补列）");
-  console.log("   表数量:", tables.length, "| 期望表全部存在（含 v5 五表 + v6 台账 + v7 关联候选 + v8 下载记录）");
+  console.log("✅ Schema 验证通过（v1 基线 + v5 + v6 + v7 + v8 + v9 + 补列）");
+  console.log("   表数量:", tables.length, "| 期望表全部存在（含 v5 五表 + v6 台账 + v7 关联候选 + v8 下载记录 + v9 索引）");
   console.log("   FTS5:", hit && hit.name === "Users" ? "搜索命中 ✓" : "搜索异常 ✗");
   console.log("   外键/CHECK/唯一索引:", "孤立记录、双空挂点、重复台账、重复事件均被拒绝 ✓");
 } catch (e) {

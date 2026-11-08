@@ -37,8 +37,55 @@ pub mod kinds {
     pub const ALL: [&str; 4] = [DISCOVERED, MODIFIED, MISSING, REAPPEARED];
 }
 
-/// 单对差分事件数量上限（可配置——测试传小值；生产用默认）。
+/// 单对差分事件数量上限（默认值；生产可在 meta 中按卷全局覆盖）。
 pub const DEFAULT_MAX_DIFF_EVENTS: usize = 50_000;
+
+/// meta 键：人工确认的差分事件上限（pending_over_limit 处置"提高上限"写入）。
+pub const META_DIFF_MAX_EVENTS: &str = "diff_max_events";
+
+/// 读取当前生效的差分事件上限（meta 覆盖 → 默认值；越界值回退默认——
+/// 非法配置不得让差分瘫痪）。
+pub fn configured_max_diff_events(db: &Database) -> usize {
+    let v = db
+        .get_meta(META_DIFF_MAX_EVENTS)
+        .ok()
+        .flatten()
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_MAX_DIFF_EVENTS);
+    if (1_000..=5_000_000).contains(&v) {
+        v
+    } else {
+        DEFAULT_MAX_DIFF_EVENTS
+    }
+}
+
+/// 处置一：人工提高差分事件上限（pending_over_limit 对将由 run_diff_now
+/// 自动重试——PairDecision::Run）。返回生效值（越界请求被钳制后如实返回）。
+pub fn diff_raise_limit(db: &Database, new_max: usize) -> Result<usize, CoreError> {
+    if !(1_000..=5_000_000).contains(&new_max) {
+        return Err(CoreError::Other(format!(
+            "上限需在 1,000 ~ 5,000,000 之间: {new_max}"
+        )));
+    }
+    db.set_meta(META_DIFF_MAX_EVENTS, &new_max.to_string())?;
+    Ok(new_max)
+}
+
+/// 处置二：人工确认放弃一个被阻塞的差分对（pending_over_limit →
+/// skipped_over_limit，append-only 方向合法：pending 本就是"待人工处置"态）。
+/// 返回是否发生转移（不存在/非 pending → false，不静默伪装成功）。
+pub fn diff_abandon_pair(db: &Database, run_id: i64, note: &str) -> Result<bool, CoreError> {
+    let reason = format!("人工确认放弃：{note}");
+    let n = db
+        .conn
+        .execute(
+            "UPDATE scan_diff_runs SET status='skipped_over_limit', skip_reason=?1
+             WHERE id=?2 AND status='pending_over_limit'",
+            rusqlite::params![reason, run_id],
+        )
+        .map_err(|e| CoreError::Database(format!("放弃差分对失败: {e}")))?;
+    Ok(n > 0)
+}
 
 /// 台账状态（与 scan_diff_runs.status 对应）。
 pub mod run_status {

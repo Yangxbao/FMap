@@ -162,6 +162,8 @@ pub fn run() {
             commands::get_diff_runs,
             commands::get_history_events,
             commands::run_diff_now,
+            commands::diff_raise_limit,
+            commands::diff_abandon_pair,
             commands_m3b::watch_list,
             commands_m3b::watch_add_root,
             commands_m3b::watch_remove_root,

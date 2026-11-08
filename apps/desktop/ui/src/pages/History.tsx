@@ -1,10 +1,18 @@
-/** 历史追踪（M3-B1）：差分事件与台账的真实展示——无演示数据。
+/** 历史追踪（M3-B1 + M5 完善）：差分事件与台账的真实展示——无演示数据。
  *  语义纪律：DISCOVERED=首次观察到（≠刚创建）；MISSING=缺失待确认（≠已删除）；
  *  本页不展示、不推断任何 AI 来源信息。
+ *  M5 增强：分页（每页 100）+ 按卷过滤 + 路径子串搜索 + 差分超限处置入口
+ *  （提高上限自动重跑 / 人工确认放弃——处置只影响 pending_over_limit 台账行）。
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card, DevPlaceholder } from "../components/EmptyState";
-import { api, IpcError, type DiffRunRow, type HistoryEventRow } from "../lib/ipc";
+import {
+  api,
+  IpcError,
+  type DiffRunRow,
+  type HistoryEventRow,
+  type VolumeOverview,
+} from "../lib/ipc";
 import { diffRunStatusLabel, eventKindLabel, eventNote, formatBytes } from "../lib/format";
 
 const KIND_BADGE: Record<string, string> = {
@@ -13,6 +21,8 @@ const KIND_BADGE: Record<string, string> = {
   file_missing: "text-[#f2994a] border-[#f2994a]/40",
   file_reappeared: "text-[#6ccb5f] border-[#6ccb5f]/40",
 };
+
+const PAGE_SIZE = 100;
 
 function fmtTime(ms: number | null): string {
   return ms ? new Date(ms).toLocaleString("zh-CN") : "—";
@@ -46,44 +56,155 @@ function detailSummary(detail: string | null): string {
   }
 }
 
-export function History() {
-  const [events, setEvents] = useState<HistoryEventRow[] | null>(null);
-  const [runs, setRuns] = useState<DiffRunRow[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+/** 被阻塞差分对的处置控件（提高上限 / 确认放弃）。 */
+function OverLimitActions(props: { run: DiffRunRow; onDone: () => void }) {
   const [busy, setBusy] = useState(false);
-
-  const load = useCallback(() => {
-    setErr(null);
-    api
-      .getHistoryEvents(300)
-      .then(setEvents)
-      .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
-    api
-      .getDiffRuns(null)
-      .then(setRuns)
-      .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const rerunDiff = async () => {
-    if (!runs?.length) return;
+  const [newMax, setNewMax] = useState("100000");
+  const [askAbandon, setAskAbandon] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const raise = async () => {
     setBusy(true);
+    setErr(null);
     try {
-      // 对台账中出现的每个卷手动补跑一次差分（B1 最小：同步执行）
-      const vids = [...new Set(runs.map((r) => r.volume_id))];
-      for (const v of vids) {
-        await api.runDiffNow(v);
-      }
-      load();
+      await api.diffRaiseLimit(Number(newMax));
+      props.onDone();
     } catch (e: unknown) {
       setErr(e instanceof IpcError ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   };
+  const abandon = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const ok = await api.diffAbandonPair(props.run.id, "用户在历史页确认放弃该差分对");
+      if (!ok) setErr("该台账行已不是待处置状态");
+      setAskAbandon(false);
+      props.onDone();
+    } catch (e: unknown) {
+      setErr(e instanceof IpcError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-2 rounded border border-[#f26d6d]/40 bg-[#f26d6d]/5 px-2.5 py-2 text-[11.5px]">
+      <div className="mb-1.5 text-[#f26d6d]">处置（二选一，只影响本条台账行）：</div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-[#9aa0a6]">① 提高上限并重跑：</span>
+        <input
+          className="w-28 rounded border border-[#35373c] bg-[#1f2023] px-2 py-0.5 font-mono text-[11px] text-[#e8eaed] outline-none focus:border-[#4cc2ff]"
+          value={newMax}
+          onChange={(e) => setNewMax(e.target.value.replace(/[^\d]/g, ""))}
+        />
+        <button
+          className="rounded border border-[#4cc2ff] px-2 py-0.5 text-[11px] text-[#4cc2ff] disabled:opacity-40"
+          disabled={busy}
+          onClick={raise}
+        >
+          提高上限
+        </button>
+        <span className="text-[#6b7075]">（提高后点下方「补跑差分」生效）</span>
+      </div>
+      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+        <span className="text-[#9aa0a6]">② 或</span>
+        {askAbandon ? (
+          <>
+            <button
+              className="rounded border border-[#f26d6d]/60 px-2 py-0.5 text-[11px] text-[#f26d6d] disabled:opacity-40"
+              disabled={busy}
+              onClick={abandon}
+            >
+              确认放弃（本对永不再研判）
+            </button>
+            <button
+              className="rounded border border-[#35373c] px-2 py-0.5 text-[11px] text-[#9aa0a6]"
+              onClick={() => setAskAbandon(false)}
+            >
+              取消
+            </button>
+          </>
+        ) : (
+          <button
+            className="rounded border border-[#f26d6d]/50 px-2 py-0.5 text-[11px] text-[#f26d6d] disabled:opacity-40"
+            disabled={busy}
+            onClick={() => setAskAbandon(true)}
+          >
+            确认放弃这对差分
+          </button>
+        )}
+      </div>
+      {err && <div className="mt-1.5 text-[#f26d6d]">{err}</div>}
+    </div>
+  );
+}
+
+export function History() {
+  const [events, setEvents] = useState<HistoryEventRow[] | null>(null);
+  const [total, setTotal] = useState(0);
+  const [runs, setRuns] = useState<DiffRunRow[] | null>(null);
+  const [volumes, setVolumes] = useState<VolumeOverview[]>([]);
+  const [page, setPage] = useState(0);
+  const [volFilter, setVolFilter] = useState<number | null>(null);
+  const [search, setSearch] = useState("");
+  const [applied, setApplied] = useState<{ vol: number | null; q: string }>({ vol: null, q: "" });
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(
+    (pageNo: number, vol: number | null, q: string) => {
+      setErr(null);
+      api
+        .getHistoryEvents(vol, q || null, PAGE_SIZE, pageNo * PAGE_SIZE)
+        .then((p) => {
+          setEvents(p.rows);
+          setTotal(p.total);
+        })
+        .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
+      api
+        .getDiffRuns(null)
+        .then(setRuns)
+        .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
+    },
+    []
+  );
+
+  useEffect(() => {
+    load(page, applied.vol, applied.q);
+  }, [load, page, applied]);
+
+  // 卷下拉（磁盘地图数据源复用；失败静默——过滤是增强功能）
+  useEffect(() => {
+    api
+      .getVolumeOverviews()
+      .then(setVolumes)
+      .catch(() => undefined);
+  }, []);
+
+  const applyFilters = () => {
+    setPage(0);
+    setApplied({ vol: volFilter, q: search.trim() });
+  };
+
+  const rerunDiff = async () => {
+    if (!runs?.length) return;
+    setBusy(true);
+    try {
+      // 对台账中出现的每个卷手动补跑一次差分（pending_over_limit 对会自动重试）
+      const vids = [...new Set(runs.map((r) => r.volume_id))];
+      for (const v of vids) {
+        await api.runDiffNow(v);
+      }
+      load(page, applied.vol, applied.q);
+    } catch (e: unknown) {
+      setErr(e instanceof IpcError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div>
@@ -120,7 +241,7 @@ export function History() {
             >
               {busy ? "差分中…" : "补跑差分（全部卷）"}
             </button>
-            <span className="text-[11px] text-[#6b7075]">用于超限处置 / 手动补齐</span>
+            <span className="text-[11px] text-[#6b7075]">用于超限处置后重跑 / 手动补齐</span>
           </div>
           <div className="space-y-1.5">
             {runs.map((r) => (
@@ -162,11 +283,7 @@ export function History() {
                   <div className="mt-1 text-[11px] text-[#9aa0a6]">跳过原因：{r.skip_reason}</div>
                 )}
                 {r.status === "pending_over_limit" && (
-                  <div className="mt-1 text-[11px] leading-relaxed text-[#f26d6d]">
-                    该差分对事件量超过上限被阻塞，其后所有差分已暂停。请人工评估后
-                    处理（当前版本：提高上限配置或放弃该对——处置入口在后续版本提供，
-                    可通过重新扫描 + 本页补跑按钮恢复）。
-                  </div>
+                  <OverLimitActions run={r} onDone={() => load(page, applied.vol, applied.q)} />
                 )}
               </div>
             ))}
@@ -174,15 +291,64 @@ export function History() {
         </>
       )}
 
-      {/* 事件时间线 */}
+      {/* 过滤与搜索 */}
       <h2 className="mb-2 mt-5 text-[14px] font-semibold">文件事件（最新在前）</h2>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <select
+          className="rounded border border-[#35373c] bg-[#1f2023] px-2 py-1.5 text-[12px] text-[#e8eaed] outline-none focus:border-[#4cc2ff]"
+          value={volFilter ?? ""}
+          onChange={(e) => {
+            const v = e.target.value === "" ? null : Number(e.target.value);
+            setVolFilter(v);
+            setPage(0);
+            setApplied({ vol: v, q: search.trim() });
+          }}
+        >
+          <option value="">全部卷</option>
+          {volumes.map((v) => (
+            <option key={v.volume_id} value={v.volume_id}>
+              {v.root}（{v.latest_scan_status ?? "未扫描"}）
+            </option>
+          ))}
+        </select>
+        <input
+          className="w-64 rounded border border-[#35373c] bg-[#1f2023] px-2.5 py-1.5 text-[12px] text-[#e8eaed] outline-none focus:border-[#4cc2ff]"
+          placeholder="按路径子串搜索（如 .claude 或 章节）"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && applyFilters()}
+        />
+        <button
+          className="rounded border border-[#4cc2ff] px-3 py-1.5 text-[12px] text-[#4cc2ff]"
+          onClick={applyFilters}
+        >
+          搜索
+        </button>
+        {(applied.q || applied.vol !== null) && (
+          <button
+            className="rounded border border-[#35373c] px-3 py-1.5 text-[12px] text-[#9aa0a6]"
+            onClick={() => {
+              setSearch("");
+              setVolFilter(null);
+              setPage(0);
+              setApplied({ vol: null, q: "" });
+            }}
+          >
+            清除过滤
+          </button>
+        )}
+        <span className="text-[11px] text-[#6b7075]">
+          共 {total.toLocaleString()} 条{applied.q ? `（匹配「${applied.q}」）` : ""}
+        </span>
+      </div>
+
       {events === null ? (
         <div className="text-[12px] text-[#9aa0a6]">读取中…</div>
       ) : events.length === 0 ? (
         <div className="rounded-md border border-dashed border-[#35373c] bg-[#1f2023] px-6 py-10 text-center">
-          <div className="text-[14px] text-[#9aa0a6]">尚无文件事件</div>
+          <div className="text-[14px] text-[#9aa0a6]">当前条件下没有事件</div>
           <div className="mt-1.5 text-[12px] text-[#6b7075]">
-            事件来自相邻两次有效扫描的差分。请在总览页执行至少两次扫描。
+            事件来自相邻两次有效扫描的差分。请在总览页执行至少两次扫描，或调整过滤条件。
           </div>
         </div>
       ) : (
@@ -215,6 +381,29 @@ export function History() {
             </div>
           ))}
         </Card>
+      )}
+
+      {/* 分页 */}
+      {total > PAGE_SIZE && (
+        <div className="mt-2 flex items-center justify-center gap-3 text-[12px]">
+          <button
+            className="rounded border border-[#35373c] px-3 py-1 text-[#9aa0a6] disabled:opacity-40"
+            disabled={page === 0}
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+          >
+            上一页
+          </button>
+          <span className="text-[#9aa0a6]">
+            第 {page + 1} / {totalPages} 页
+          </span>
+          <button
+            className="rounded border border-[#35373c] px-3 py-1 text-[#9aa0a6] disabled:opacity-40"
+            disabled={page + 1 >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            下一页
+          </button>
+        </div>
       )}
 
       <div className="mt-3 text-[11px] leading-relaxed text-[#6b7075]">
