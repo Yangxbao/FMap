@@ -239,6 +239,9 @@ export const api = {
     invoke<DiffRunRow[]>("get_diff_runs", { volumeId }),
   runDiffNow: (volumeId: number) =>
     invoke<DiffSummary>("run_diff_now", { volumeId }),
+  // M5 项目资产/报告中心
+  getProjects: () => invoke<WorkspaceRow[]>("get_projects"),
+  getReports: () => invoke<ReportsData>("get_reports"),
   // M3-C 工具行为关联
   runCorrelation: () => invoke<CorrSummary>("run_correlation"),
   getCorrelationData: (stateFilter: string | null) =>
@@ -562,4 +565,53 @@ export interface WatchGap {
 export interface HistoryEventsPage {
   rows: HistoryEventRow[];
   total: number;
+}
+
+// ---------- M5：项目资产 / 报告中心 ----------
+
+export interface WorkspaceTool {
+  tool_key: string;
+  tool_name: string;
+  /** dir（数据目录锚点）| signal（特征文件锚点） */
+  anchor: string;
+}
+
+export interface WorkspaceRow {
+  path_id: number;
+  volume_id: number;
+  volume_root: string;
+  rel_path: string;
+  abs_path: string;
+  tools: WorkspaceTool[];
+  files: number;
+  total_size: number;
+  events: number;
+  last_event_ts: number | null;
+}
+
+export interface ToolUsageRow {
+  tool_key: string;
+  tool_name: string;
+  files: number;
+  total_size: number;
+  data_dirs: string[];
+  signal_files: string[];
+}
+
+export interface VolumeChangeRow {
+  volume_id: number;
+  volume_root: string;
+  files_scanned: number | null;
+  last_scan_finished_at: number | null;
+  discovered: number;
+  modified: number;
+  missing: number;
+  reappeared: number;
+  last_diff_at: number | null;
+}
+
+export interface ReportsData {
+  tools: ToolUsageRow[];
+  changes: VolumeChangeRow[];
+  generated_at: number;
 }

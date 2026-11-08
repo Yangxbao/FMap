@@ -16,6 +16,8 @@ pub mod browser;
 pub mod correlation_pass;
 pub mod diff_pass;
 pub mod identity_pass;
+pub mod projects;
+pub mod reports;
 pub mod rules_loader;
 pub mod scan_writer;
 pub mod source;

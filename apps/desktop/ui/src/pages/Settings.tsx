@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { BrowserDownloadsCard } from "../components/BrowserDownloadsCard";
 import { api, IpcError, type IdentitySettings, type RevokeStats } from "../lib/ipc";
 import { sourceBehaviorLabel } from "../lib/format";
@@ -171,10 +172,15 @@ function IdentityCollectionCard() {
 export function Settings() {
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">设置</h1>
-      <p className="mb-5 mt-1 text-[12px] text-[#9aa0a6]">
-        默认策略（已确定的最终决策）+ 隐私敏感功能的逐项授权（默认关闭）。
-      </p>
+      <PageHeader
+        title="设置"
+        subtitle={
+          <>  
+          默认策略（已确定的最终决策）+ 隐私敏感功能的逐项授权（默认关闭）。
+        
+          </>
+        }
+      />
       <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
         <IdentityCollectionCard />
         <BrowserDownloadsCard />

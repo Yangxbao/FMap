@@ -4,6 +4,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import {
   api,
   IpcError,
@@ -50,12 +51,17 @@ export function Monitor() {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">实时监控</h1>
-      <p className="mb-2 mt-1 text-[12px] leading-relaxed text-[#9aa0a6]">
-        逐目录授权的 RDCW 采集（设置页授权）+ 变更日志能力画像。
-        事件不携带进程归属——ETW 需管理员权限，已被产品决策排除。
-        卷级 USN Journal 同样需要管理员，在产品红线内<b>不启用</b>，能力探测如实展示。
-      </p>
+      <PageHeader
+        title="实时监控"
+        subtitle={
+          <>  
+          逐目录授权的 RDCW 采集（设置页授权）+ 变更日志能力画像。
+          事件不携带进程归属——ETW 需管理员权限，已被产品决策排除。
+          卷级 USN Journal 同样需要管理员，在产品红线内<b>不启用</b>，能力探测如实展示。
+        
+          </>
+        }
+      />
 
       {err && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">

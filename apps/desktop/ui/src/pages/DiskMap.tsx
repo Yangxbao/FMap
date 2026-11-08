@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { api, IpcError, type VolumeOverview } from "../lib/ipc";
 import { formatBytes } from "../lib/format";
 import type { PageId } from "../lib/format";
@@ -143,11 +144,16 @@ export function DiskMap(props: { onNavigate: (p: PageId) => void }) {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">磁盘地图</h1>
-      <p className="mb-2 mt-1 text-[12px] leading-relaxed text-[#9aa0a6]">
-        基于扫描数据库的卷级视图。所有数字都是「扫描时快照」——明确标注采集时间与覆盖状态；
-        未扫描的卷如实标注，不显示为空目录；本页不读取文件内容、不计算哈希。
-      </p>
+      <PageHeader
+        title="磁盘地图"
+        subtitle={
+          <>  
+          基于扫描数据库的卷级视图。所有数字都是「扫描时快照」——明确标注采集时间与覆盖状态；
+          未扫描的卷如实标注，不显示为空目录；本页不读取文件内容、不计算哈希。
+        
+          </>
+        }
+      />
 
       {err && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">

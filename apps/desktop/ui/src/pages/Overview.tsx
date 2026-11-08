@@ -2,6 +2,7 @@
  *  + 明确标记的未实现区块。 */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Card, DevPlaceholder } from "../components/EmptyState";
+import { PageHeader, StatStrip } from "../components/PageHeader";
 import {
   api,
   IpcError,
@@ -25,8 +26,16 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scan, setScan] = useState<ScanProgress | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [customPath, setCustomPath] = useState("");
+  // 自定义路径跨导航持久化（sessionStorage）——修复"导航回来路径清空"的小瑕疵
+  const [customPath, setCustomPath] = useState(
+    () => sessionStorage.getItem("fmap-custom-path") ?? ""
+  );
   const pollRef = useRef<number | null>(null);
+
+  const updateCustomPath = (v: string) => {
+    setCustomPath(v);
+    sessionStorage.setItem("fmap-custom-path", v);
+  };
 
   const running = scan !== null && !TERMINAL.has(scan.status);
 
@@ -80,7 +89,7 @@ function ScanCard(props: { connected: boolean; volumes: VolumeInfo[] | null }) {
         className="mb-2 w-full rounded border border-[#35373c] bg-[#1f2023] px-2 py-1 text-[11.5px] font-mono text-[#9aa0a6]"
         placeholder="自定义路径（可选，如 E:\project）"
         value={customPath}
-        onChange={(e) => setCustomPath(e.target.value)}
+        onChange={(e) => updateCustomPath(e.target.value)}
         disabled={running}
       />
       <div className="flex items-center gap-2.5">
@@ -245,6 +254,45 @@ function Row(props: { k: string; v: React.ReactNode; ok?: boolean }) {
   );
 }
 
+/** 总览真实数据统计条（识别工具 / 待审关联 / 差分事件）。
+ *  失败静默降级为 "—"——统计是增强，不应打断页面。 */
+function OverviewStats(props: { connected: boolean }) {
+  const [tools, setTools] = useState<number | null>(null);
+  const [pending, setPending] = useState<number | null>(null);
+  const [events, setEvents] = useState<number | null>(null);
+  useEffect(() => {
+    if (!props.connected) return;
+    let alive = true;
+    (async () => {
+      try {
+        const toolsResp = (await api.getToolsOverview()) as unknown[];
+        const corr = await api.getCorrelationData("pending");
+        const hist = await api.getHistoryEvents(null, null, 1, 0);
+        if (alive) {
+          setTools(Array.isArray(toolsResp) ? toolsResp.length : null);
+          setPending(corr.overview.pending);
+          setEvents(hist.total);
+        }
+      } catch {
+        // 统计失败不打断页面（值保持 null → "—"）
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [props.connected]);
+  if (!props.connected) return null;
+  return (
+    <StatStrip
+      items={[
+        { label: "识别的工具", value: tools ?? "—", accent: "text-[#b9aef5]", title: "最近归属分析中有结论的工具数" },
+        { label: "待审关联候选", value: pending ?? "—", accent: "text-[#f2c744]", title: "行为关联页待审查数" },
+        { label: "差分事件", value: events ?? "—", title: "历史追踪事件总数" },
+      ]}
+    />
+  );
+}
+
 export function Overview(props: { status: SystemStatus | null; error: string | null }) {
   const [volumes, setVolumes] = useState<VolumeInfo[] | null>(null);
   const [volumesError, setVolumesError] = useState<string | null>(null);
@@ -274,10 +322,11 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">总览</h1>
-      <p className="mb-5 mt-1 text-[12px] text-[#9aa0a6]">
-        本页展示真实系统状态。标注"开发中"的区块将在对应里程碑实现——不使用演示数据。
-      </p>
+      <PageHeader
+        title="总览"
+        subtitle="真实系统状态与扫描控制。所有数字来自本地数据库与系统探测——不使用演示数据。"
+      />
+      <OverviewStats connected={connected} />
 
       {!connected && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">

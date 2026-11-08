@@ -4,6 +4,7 @@
  *  未确认一律显示「未知」。 */
 import { useCallback, useEffect, useState } from "react";
 import { api, IpcError, type PathSourceDetail, type SourceBehavior } from "../lib/ipc";
+import { PageHeader } from "../components/PageHeader";
 import { eventKindLabel, sourceActionLabel, sourceBehaviorLabel } from "../lib/format";
 
 type Overview = {
@@ -263,11 +264,16 @@ export function Tools() {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">AI 工具识别中心</h1>
-      <p className="mb-2 mt-1 text-[12px] text-[#9aa0a6]">
-        基于 AI 工具目录规则库与信号文件（仅文件名，不读取正文）的工具关联分析。
-        每条结论都可展开证据链；无法判断时诚实显示未知。
-      </p>
+      <PageHeader
+        title="AI 工具识别中心"
+        subtitle={
+          <>  
+          基于 AI 工具目录规则库与信号文件（仅文件名，不读取正文）的工具关联分析。
+          每条结论都可展开证据链；无法判断时诚实显示未知。
+        
+          </>
+        }
+      />
       <div className="mb-4 rounded-md border border-[#4cc2ff]/30 bg-[#4cc2ff]/5 px-4 py-2.5 text-[11.5px] leading-relaxed text-[#9aa0a6]">
         <b className="text-[#4cc2ff]">两个维度，请勿混淆：</b>
         ① <b>工具关联</b>（本页）——某路径与某个 AI 工具存在关联，以及关联的可信度；

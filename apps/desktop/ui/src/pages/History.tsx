@@ -6,6 +6,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card, DevPlaceholder } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
+import { EmptyWithAction } from "../components/PageHeader";
 import {
   api,
   IpcError,
@@ -208,12 +210,17 @@ export function History() {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">历史追踪</h1>
-      <p className="mb-2 mt-1 text-[12px] text-[#9aa0a6]">
-        基于有效扫描代之间的差分（M3-B1）。「首次观察到」不代表文件刚刚创建；
-        「缺失」不代表已删除——缺失的文件可能被移动、重命名或暂时不可见。
-        本页不展示任何 AI 来源判断。
-      </p>
+      <PageHeader
+        title="历史追踪"
+        subtitle={
+          <>  
+          基于有效扫描代之间的差分（M3-B1）。「首次观察到」不代表文件刚刚创建；
+          「缺失」不代表已删除——缺失的文件可能被移动、重命名或暂时不可见。
+          本页不展示任何 AI 来源判断。
+        
+          </>
+        }
+      />
 
       {err && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">
@@ -345,12 +352,12 @@ export function History() {
       {events === null ? (
         <div className="text-[12px] text-[#9aa0a6]">读取中…</div>
       ) : events.length === 0 ? (
-        <div className="rounded-md border border-dashed border-[#35373c] bg-[#1f2023] px-6 py-10 text-center">
-          <div className="text-[14px] text-[#9aa0a6]">当前条件下没有事件</div>
-          <div className="mt-1.5 text-[12px] text-[#6b7075]">
-            事件来自相邻两次有效扫描的差分。请在总览页执行至少两次扫描，或调整过滤条件。
-          </div>
-        </div>
+        <EmptyWithAction
+          title="当前条件下没有事件"
+          hint="事件来自相邻两次有效扫描的差分。请在总览页执行至少两次扫描（或调整上方过滤条件）。"
+          actionLabel="去总览页扫描 →"
+          actionHash="#/overview"
+        />
       ) : (
         <Card>
           {events.map((e) => (

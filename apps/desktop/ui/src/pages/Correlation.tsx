@@ -7,6 +7,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import { api, IpcError, type CorrCandidateRow, type CorrelationPageData } from "../lib/ipc";
 import {
   corrConfidenceLabel,
@@ -219,13 +220,18 @@ export function Correlation() {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">行为关联（AI 工具 × 文件观察）</h1>
-      <p className="mb-2 mt-1 text-[12px] leading-relaxed text-[#9aa0a6]">
-        候选 = 「文件位于工具活动工作区内 <b>且</b> 其最后修改时间落在工具活动观察的时间窗口内」。
-        这是<b>可审查的时间关联</b>，不是来源判断——时间共现与路径位置都不足以认定
-        「由 AI 创建/修改」。来源行为的唯一入口是 AI 工具页的来源确认。
-        证据不足时不产生候选。
-      </p>
+      <PageHeader
+        title="行为关联（AI 工具 × 文件观察）"
+        subtitle={
+          <>  
+          候选 = 「文件位于工具活动工作区内 <b>且</b> 其最后修改时间落在工具活动观察的时间窗口内」。
+          这是<b>可审查的时间关联</b>，不是来源判断——时间共现与路径位置都不足以认定
+          「由 AI 创建/修改」。来源行为的唯一入口是 AI 工具页的来源确认。
+          证据不足时不产生候选。
+        
+          </>
+        }
+      />
 
       {err && (
         <div className="mb-4 rounded-md border border-[#f2c744]/40 bg-[#f2c744]/10 px-4 py-3 text-[12.5px] text-[#f2c744]">

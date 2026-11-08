@@ -16,6 +16,7 @@ mod commands_m3b;
 mod commands_m3c;
 mod commands_m3d;
 mod commands_m4;
+mod commands_m5;
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -200,6 +201,8 @@ pub fn run() {
             commands_m4::get_journal_capabilities,
             commands_m4::reveal_in_explorer,
             commands_m4::get_monitor_data,
+            commands_m5::get_projects,
+            commands_m5::get_reports,
         ])
         .build(tauri::generate_context!())
         .expect("FMap 桌面应用构建失败")

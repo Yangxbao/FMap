@@ -7,7 +7,8 @@ import { Correlation } from "./pages/Correlation";
 import { DiskMap } from "./pages/DiskMap";
 import { Files } from "./pages/Files";
 import { Monitor } from "./pages/Monitor";
-import { Projects, Reports } from "./pages/Placeholders";
+import { Projects } from "./pages/Projects";
+import { Reports } from "./pages/Reports";
 import { History } from "./pages/History";
 import { Settings } from "./pages/Settings";
 import { api, backendAvailable, IpcError, type SystemStatus } from "./lib/ipc";
@@ -53,7 +54,7 @@ export function App() {
       {page === "files" && <Files />}
       {page === "tools" && <Tools />}
       {page === "correlation" && <Correlation />}
-      {page === "projects" && <Projects />}
+      {page === "projects" && <Projects onNavigate={navigate} />}
       {page === "history" && <History />}
       {page === "monitor" && <Monitor />}
       {page === "reports" && <Reports />}

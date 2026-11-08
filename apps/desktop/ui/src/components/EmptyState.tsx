@@ -3,7 +3,12 @@ import type { ReactNode } from "react";
 
 export function Card(props: { title?: string; children: ReactNode; className?: string }) {
   return (
-    <div className={"rounded-md border border-[#35373c] bg-[#24262a] p-4 " + (props.className ?? "")}>
+    <div
+      className={
+        "rounded-md border border-[#35373c] bg-[#24262a] p-4 transition-colors hover:border-[#45484f] " +
+        (props.className ?? "")
+      }
+    >
       {props.title && <h3 className="mb-3 text-[13px] font-semibold">{props.title}</h3>}
       {props.children}
     </div>

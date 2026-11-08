@@ -5,6 +5,7 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
+import { PageHeader } from "../components/PageHeader";
 import {
   api,
   IpcError,
@@ -186,12 +187,17 @@ export function Files() {
 
   return (
     <div>
-      <h1 className="text-[19px] font-semibold">文件浏览</h1>
-      <p className="mb-3 mt-1 text-[12px] leading-relaxed text-[#9aa0a6]">
-        基于上次扫描快照（各卷最新代）的只读浏览。这里出现的每个路径都是数据库中的
-        真实记录；不读取文件内容；本页绝不删除、移动、重命名任何文件。
-        快照可能过期——以扫描时间为准。
-      </p>
+      <PageHeader
+        title="文件浏览"
+        subtitle={
+          <>  
+          基于上次扫描快照（各卷最新代）的只读浏览。这里出现的每个路径都是数据库中的
+          真实记录；不读取文件内容；本页绝不删除、移动、重命名任何文件。
+          快照可能过期——以扫描时间为准。
+        
+          </>
+        }
+      />
 
       {/* 搜索 */}
       <div className="mb-3 flex flex-wrap gap-2">

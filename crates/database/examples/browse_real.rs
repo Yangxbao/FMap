@@ -153,4 +153,25 @@ fn main() {
         t3.elapsed()
     );
     println!("M5 抽查：PASS");
+
+    // 8) M5 大轮抽查：项目资产聚合 + 报告中心（只输出计数/体量，不输出用户路径）
+    let t4 = std::time::Instant::now();
+    let ws = db.workspaces().expect("项目资产聚合应成功");
+    println!(
+        "项目资产：工作区 {} 个（耗时 {:?}），文件合计 {}，字节合计 {}",
+        ws.len(),
+        t4.elapsed(),
+        ws.iter().map(|w| w.files).sum::<i64>(),
+        ws.iter().map(|w| w.total_size).sum::<i64>()
+    );
+    let t5 = std::time::Instant::now();
+    let rep = db.reports().expect("报告聚合应成功");
+    println!(
+        "报告中心：工具 {} 个（耗时 {:?}），数据目录合计 {}，变化报告 {} 卷",
+        rep.tools.len(),
+        t5.elapsed(),
+        rep.tools.iter().map(|t| t.data_dirs.len()).sum::<usize>(),
+        rep.changes.len()
+    );
+    println!("M5 大轮抽查：PASS");
 }
