@@ -153,8 +153,11 @@ Tauri 2 壳（React 19 + TypeScript + Tailwind v4）
 - [x] M3-A/B：文件身份 · 事件追踪 · 实时监控
 - [x] M3-C：行为关联（时间关联候选）
 - [x] M3-D：浏览器下载记录（Chrome / Edge）
+- [x] M3-E：USN 能力探测（单文件 USN 已实现；卷级红线内不启用）
 - [x] M4：磁盘地图 · 文件浏览 · 实时监控页
-- [ ] M5：产品化打磨（性能回归 · 长期稳定性 · 安装包）
+- [x] 项目资产 · 报告中心 · 历史页 v2 · 差分超限处置
+- [x] NSIS 安装包（真机安装/卸载验证）
+- [ ] M5 收尾：长期运行稳定性 · macOS/Linux 适配
 - [ ] 跨平台（Linux / macOS——架构已按 trait 抽象，见 [兼容性说明](docs/architecture/PLATFORM_COMPATIBILITY.md)）
 - [ ] 规则包社区共建（新增 AI 工具识别规则）
 
