@@ -454,3 +454,13 @@ pub fn run_diff_now(
     )
     .map_err(|e| e.into())
 }
+
+/// 当前生效的差分事件上限（设置页展示）。
+#[tauri::command]
+pub fn get_diff_limit(state: State<'_, AppState>) -> Result<i64, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    Ok(diff_pass::configured_max_diff_events(db) as i64)
+}

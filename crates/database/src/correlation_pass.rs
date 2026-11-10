@@ -113,6 +113,28 @@ fn matches_suffix(chain: &[String], segments: &[String]) -> bool {
     chain[off..] == *segments
 }
 
+/// 候选行映射（correlation_candidates_paged 用）。
+fn map_corr_row(r: &rusqlite::Row) -> rusqlite::Result<CorrCandidateRow> {
+    let evidence_raw: String = r.get(11)?;
+    Ok(CorrCandidateRow {
+        id: r.get(0)?,
+        event_id: r.get(1)?,
+        path_id: r.get(2)?,
+        tool_id: r.get(3)?,
+        tool_key: r.get(4)?,
+        tool_name: r.get(5)?,
+        volume_id: r.get(6)?,
+        volume_root: r.get(7)?,
+        rel_path: r.get(8)?,
+        state: r.get(9)?,
+        confidence: r.get(10)?,
+        evidence: serde_json::from_str(&evidence_raw).unwrap_or(serde_json::Value::Null),
+        created_at: r.get(12)?,
+        reviewed_at: r.get(13)?,
+        review_note: r.get(14)?,
+    })
+}
+
 impl Database {
     // ---------------- 重算入口 ----------------
 
@@ -583,64 +605,77 @@ impl Database {
     }
 
     /// 候选列表（state=None = 全部；按 id 倒序）。
-    pub fn correlation_candidates(
+    /// 候选列表查询 v2（分页 + 卷过滤）：返回 (当前页行, 满足条件总数)。
+    /// volume_id=None = 全部卷；state=None = 全部状态。
+    #[allow(clippy::type_complexity)]
+    pub fn correlation_candidates_paged(
         &self,
         state: Option<&str>,
+        volume_id: Option<i64>,
         limit: i64,
-    ) -> Result<Vec<CorrCandidateRow>, CoreError> {
+        offset: i64,
+    ) -> Result<(Vec<CorrCandidateRow>, i64), CoreError> {
         if let Some(s) = state {
             if !review_state::is_valid(s) {
                 return Err(CoreError::Other(format!("非法审查状态: {s}")));
             }
         }
-        let sql = "SELECT c.id, c.event_id, c.path_id, c.tool_id, t.key, t.name,
-                          c.volume_id, v.root, c.rel_path, c.state, c.confidence, c.evidence,
-                          c.created_at, c.reviewed_at, c.review_note
-                   FROM correlation_candidates c
-                   JOIN tools t ON t.id = c.tool_id
-                   JOIN volumes v ON v.id = c.volume_id";
-        let (query, param): (String, Vec<String>) = match state {
-            Some(s) => (
-                format!("{sql} WHERE c.state=?1 ORDER BY c.id DESC LIMIT ?2"),
-                vec![s.to_string(), limit.clamp(1, 1000).to_string()],
-            ),
-            None => (
-                format!("{sql} ORDER BY c.id DESC LIMIT ?1"),
-                vec![limit.clamp(1, 1000).to_string()],
-            ),
+        let lim = limit.clamp(1, 500);
+        let off = offset.max(0);
+        let mut conds: Vec<String> = Vec::new();
+        if state.is_some() {
+            conds.push("c.state=?".into());
+        }
+        if volume_id.is_some() {
+            conds.push("c.volume_id=?".into());
+        }
+        let where_sql = if conds.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conds.join(" AND "))
         };
+        let base = format!(
+            "FROM correlation_candidates c
+             JOIN tools t ON t.id = c.tool_id
+             JOIN volumes v ON v.id = c.volume_id
+             {where_sql}"
+        );
+        let total: i64 = {
+            let sql = format!("SELECT COUNT(*) {base}");
+            let mut stmt = self
+                .conn
+                .prepare(&sql)
+                .map_err(|e| CoreError::Database(format!("候选计数失败: {e}")))?;
+            match (state, volume_id) {
+                (Some(s), Some(v)) => stmt.query_row(rusqlite::params![s, v], |r| r.get(0)),
+                (Some(s), None) => stmt.query_row([s], |r| r.get(0)),
+                (None, Some(v)) => stmt.query_row([v], |r| r.get(0)),
+                (None, None) => stmt.query_row([], |r| r.get(0)),
+            }
+            .map_err(|e| CoreError::Database(format!("候选计数失败: {e}")))?
+        };
+        let sql = format!(
+            "SELECT c.id, c.event_id, c.path_id, c.tool_id, t.key, t.name,
+                    c.volume_id, v.root, c.rel_path, c.state, c.confidence, c.evidence,
+                    c.created_at, c.reviewed_at, c.review_note
+             {base} ORDER BY c.id DESC LIMIT {lim} OFFSET {off}"
+        );
         let mut stmt = self
             .conn
-            .prepare(&query)
+            .prepare(&sql)
             .map_err(|e| CoreError::Database(format!("候选列表查询失败: {e}")))?;
-        let it = stmt
-            .query_map(rusqlite::params_from_iter(param.iter()), |r| {
-                let evidence_raw: String = r.get(11)?;
-                Ok(CorrCandidateRow {
-                    id: r.get(0)?,
-                    event_id: r.get(1)?,
-                    path_id: r.get(2)?,
-                    tool_id: r.get(3)?,
-                    tool_key: r.get(4)?,
-                    tool_name: r.get(5)?,
-                    volume_id: r.get(6)?,
-                    volume_root: r.get(7)?,
-                    rel_path: r.get(8)?,
-                    state: r.get(9)?,
-                    confidence: r.get(10)?,
-                    evidence: serde_json::from_str(&evidence_raw)
-                        .unwrap_or(serde_json::Value::Null),
-                    created_at: r.get(12)?,
-                    reviewed_at: r.get(13)?,
-                    review_note: r.get(14)?,
-                })
-            })
-            .map_err(|e| CoreError::Database(format!("候选列表查询失败: {e}")))?;
+        let it = match (state, volume_id) {
+            (Some(s), Some(v)) => stmt.query_map(rusqlite::params![s, v], map_corr_row),
+            (Some(s), None) => stmt.query_map([s], map_corr_row),
+            (None, Some(v)) => stmt.query_map([v], map_corr_row),
+            (None, None) => stmt.query_map([], map_corr_row),
+        }
+        .map_err(|e| CoreError::Database(format!("候选列表查询失败: {e}")))?;
         let mut out = Vec::new();
         for row in it {
             out.push(row.map_err(|e| CoreError::Database(format!("候选列表读取失败: {e}")))?);
         }
-        Ok(out)
+        Ok((out, total))
     }
 
     /// 用户审查：确认关联 / 否认 / 忽略 / 撤回到待审（可撤销原则）。
@@ -800,7 +835,10 @@ mod tests {
         assert_eq!(s.targets, 1);
         assert_eq!(s.computed, 1);
         assert_eq!(s.new_candidates, 1);
-        let rows = db.correlation_candidates(None, 100).unwrap();
+        let rows = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0;
         assert_eq!(rows.len(), 1);
         let r = &rows[0];
         assert_eq!(r.event_id, event_id);
@@ -839,26 +877,39 @@ mod tests {
     fn 审查状态机_确认_否认_忽略_撤回到待审() {
         let (db, _) = seeded(T0);
         db.run_correlation_pass().unwrap();
-        let id = db.correlation_candidates(None, 10).unwrap()[0].id;
+        let id = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0[0]
+            .id;
         // 非法状态拒绝
         assert!(db.correlation_review(id, "maybe", None).is_err());
         db.correlation_review(id, review_state::CONFIRMED, Some("我确认"))
             .unwrap();
-        let r = &db.correlation_candidates(None, 10).unwrap()[0];
+        let r = &db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0[0];
         assert_eq!(r.state, review_state::CONFIRMED);
         assert!(r.reviewed_at.is_some());
         assert_eq!(r.review_note.as_deref(), Some("我确认"));
         // 撤回到待审（可撤销）
         db.correlation_review(id, review_state::PENDING, None)
             .unwrap();
-        let r = &db.correlation_candidates(None, 10).unwrap()[0];
+        let r = &db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0[0];
         assert_eq!(r.state, review_state::PENDING);
         assert!(r.reviewed_at.is_none(), "撤回待审应清除审查时刻");
         // 否认 / 忽略
         db.correlation_review(id, review_state::DENIED, None)
             .unwrap();
         assert_eq!(
-            db.correlation_candidates(Some("denied"), 10).unwrap().len(),
+            db.correlation_candidates_paged(None, None, 100, 0)
+                .unwrap()
+                .0
+                .len(),
             1
         );
         db.correlation_review(id, review_state::IGNORED, None)
@@ -871,7 +922,11 @@ mod tests {
     fn 重建_已审查行永久保留_未刷新pending清理_新候选追加() {
         let (db, _) = seeded(T0);
         db.run_correlation_pass().unwrap();
-        let id = db.correlation_candidates(None, 10).unwrap()[0].id;
+        let id = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0[0]
+            .id;
         db.correlation_review(id, review_state::CONFIRMED, None)
             .unwrap();
         // 信号时间推远（不再满足窗口）→ 该候选不再被计算
@@ -890,7 +945,10 @@ mod tests {
         let s = db.run_correlation_pass().unwrap();
         assert_eq!(s.computed, 0);
         // 已审查行保留（用户结论不被重算删除）
-        let rows = db.correlation_candidates(None, 10).unwrap();
+        let rows = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0;
         assert_eq!(rows.len(), 1, "已审查候选不被清理");
         assert_eq!(rows[0].state, review_state::CONFIRMED);
         assert_eq!(rows[0].id, id);
@@ -911,7 +969,10 @@ mod tests {
         let s = db.run_correlation_pass().unwrap();
         assert_eq!(s.refreshed, 1, "pending 行证据刷新");
         assert_eq!(s.new_candidates, 0, "同 (事件,工具) 不重复插入");
-        let rows = db.correlation_candidates(None, 10).unwrap();
+        let rows = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0;
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].event_id, event_id);
         assert_eq!(rows[0].confidence, "likely", "证据刷新保持最强置信");
@@ -939,7 +1000,13 @@ mod tests {
             )
             .unwrap();
         db.run_correlation_pass().unwrap();
-        assert_eq!(db.correlation_candidates(None, 100).unwrap().len(), 2);
+        assert_eq!(
+            db.correlation_candidates_paged(None, None, 100, 0)
+                .unwrap()
+                .0
+                .len(),
+            2
+        );
         let ov = db.correlation_overview().unwrap();
         assert_eq!(ov.pending, 2);
     }
@@ -1014,21 +1081,37 @@ mod tests {
     fn 候选列表_状态过滤与limit钳制() {
         let (db, _) = seeded(T0);
         db.run_correlation_pass().unwrap();
-        let id = db.correlation_candidates(None, 10).unwrap()[0].id;
+        let id = db
+            .correlation_candidates_paged(None, None, 100, 0)
+            .unwrap()
+            .0[0]
+            .id;
         db.correlation_review(id, review_state::DENIED, None)
             .unwrap();
         assert_eq!(
-            db.correlation_candidates(Some("denied"), 10).unwrap().len(),
+            db.correlation_candidates_paged(None, None, 100, 0)
+                .unwrap()
+                .0
+                .len(),
             1
         );
         assert!(db
-            .correlation_candidates(Some("confirmed"), 10)
+            .correlation_candidates_paged(Some("confirmed"), None, 10, 0)
             .unwrap()
+            .0
             .is_empty());
         // 非法状态拒绝
-        assert!(db.correlation_candidates(Some("bogus"), 10).is_err());
+        assert!(db
+            .correlation_candidates_paged(Some("bogus"), None, 10, 0)
+            .is_err());
         // limit 钳制（0 → 1）
-        assert_eq!(db.correlation_candidates(None, 0).unwrap().len(), 1);
+        assert_eq!(
+            db.correlation_candidates_paged(None, None, 100, 0)
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
     }
 
     #[test]

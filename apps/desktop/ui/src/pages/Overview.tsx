@@ -266,7 +266,7 @@ function OverviewStats(props: { connected: boolean }) {
     (async () => {
       try {
         const toolsResp = (await api.getToolsOverview()) as unknown[];
-        const corr = await api.getCorrelationData("pending");
+        const corr = await api.getCorrelationData("pending", null, 1, 0);
         const hist = await api.getHistoryEvents(null, null, 1, 0);
         if (alive) {
           setTools(Array.isArray(toolsResp) ? toolsResp.length : null);

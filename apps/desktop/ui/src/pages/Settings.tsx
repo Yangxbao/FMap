@@ -169,6 +169,77 @@ function IdentityCollectionCard() {
   );
 }
 
+/** 差分事件上限卡（M5）：查看/提高全局上限——超限处置（历史页）的配套。
+ *  上限默认 50,000/对；提高后 pending_over_limit 的差分对在补跑时自动重试。
+ */
+function DiffLimitCard() {
+  const [limit, setLimit] = useState<number | null>(null);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(() => {
+    api
+      .getDiffLimit()
+      .then(setLimit)
+      .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  const raise = async () => {
+    const n = Number(input);
+    if (!Number.isFinite(n) || n <= 0) {
+      setErr("请输入正整数");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    setNote(null);
+    try {
+      const eff = await api.diffRaiseLimit(n);
+      setNote(`已生效：${eff.toLocaleString()} 事件/对。被阻塞的差分对在「历史追踪 → 补跑差分」时自动重试。`);
+      load();
+    } catch (e: unknown) {
+      setErr(e instanceof IpcError ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="差分事件上限（超限处置配套）">
+      <p className="mb-3 text-[11.5px] leading-relaxed text-[#9aa0a6]">
+        相邻两次扫描的差分一次产出超过该上限时，差分会被标记为「已阻塞（待人工处理）」
+        而不是写半截数据。处置入口在历史追踪页的被阻塞行上；这里查看并调整全局上限。
+      </p>
+      <div className="mb-2 text-[13px]">
+        当前生效上限：<b className="text-[#e8eaed]">{limit === null ? "—" : limit.toLocaleString()}</b> 事件/对
+        {limit !== null && limit !== 50000 && (
+          <span className="ml-2 text-[10.5px] text-[#f2c744]">（已人工调整，默认 50,000）</span>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="w-32 rounded border border-[#35373c] bg-[#1f2023] px-2 py-1 font-mono text-[12px] text-[#e8eaed] outline-none focus:border-[#4cc2ff]"
+          placeholder="新上限（如 100000）"
+          value={input}
+          onChange={(e) => setInput(e.target.value.replace(/[^\d]/g, ""))}
+        />
+        <button
+          className="rounded border border-[#4cc2ff] px-2.5 py-1 text-[11.5px] text-[#4cc2ff] disabled:opacity-40"
+          disabled={busy || !input}
+          onClick={raise}
+        >
+          提高上限
+        </button>
+        <span className="text-[11px] text-[#6b7075]">允许范围 1,000 ~ 5,000,000</span>
+      </div>
+      {note && <div className="mt-2 text-[11.5px] text-[#6ccb5f]">{note}</div>}
+      {err && <div className="mt-2 text-[11.5px] text-[#f26d6d]">{err}</div>}
+    </Card>
+  );
+}
+
 export function Settings() {
   return (
     <div>
@@ -184,6 +255,7 @@ export function Settings() {
       <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
         <IdentityCollectionCard />
         <BrowserDownloadsCard />
+        <DiffLimitCard />
         <Card title="扫描范围（最终决策：所有磁盘）">
           <ToggleRow
             title="默认扫描所有磁盘"

@@ -17,11 +17,12 @@ use tracenest_database::correlation_pass::{CorrCandidateRow, CorrOverview, CorrS
 
 const DB_NOT_READY: &str = "数据库未就绪";
 
-/// 关联分析页数据（总览 + 候选列表一次取回）。
+/// 关联分析页数据（总览 + 候选分页）。
 #[derive(Serialize)]
 pub struct CorrelationPageData {
     pub overview: CorrOverview,
     pub candidates: Vec<CorrCandidateRow>,
+    pub total: i64,
 }
 
 #[tauri::command]
@@ -37,14 +38,24 @@ pub fn run_correlation(state: State<'_, AppState>) -> Result<CorrSummary, Comman
 pub fn get_correlation_data(
     state: State<'_, AppState>,
     state_filter: Option<String>,
+    volume_id: Option<i64>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 ) -> Result<CorrelationPageData, CommandError> {
     let guard = state.db.lock().unwrap();
     let db = guard
         .as_ref()
         .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    let (candidates, total) = db.correlation_candidates_paged(
+        state_filter.as_deref(),
+        volume_id,
+        limit.unwrap_or(100),
+        offset.unwrap_or(0),
+    )?;
     Ok(CorrelationPageData {
         overview: db.correlation_overview()?,
-        candidates: db.correlation_candidates(state_filter.as_deref(), 300)?,
+        candidates,
+        total,
     })
 }
 

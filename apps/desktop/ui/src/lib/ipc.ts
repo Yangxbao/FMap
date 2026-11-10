@@ -239,13 +239,15 @@ export const api = {
     invoke<DiffRunRow[]>("get_diff_runs", { volumeId }),
   runDiffNow: (volumeId: number) =>
     invoke<DiffSummary>("run_diff_now", { volumeId }),
+  // M5 关联分页/差分上限
+  getDiffLimit: () => invoke<number>("get_diff_limit"),
   // M5 项目资产/报告中心
   getProjects: () => invoke<WorkspaceRow[]>("get_projects"),
   getReports: () => invoke<ReportsData>("get_reports"),
   // M3-C 工具行为关联
   runCorrelation: () => invoke<CorrSummary>("run_correlation"),
-  getCorrelationData: (stateFilter: string | null) =>
-    invoke<CorrelationPageData>("get_correlation_data", { stateFilter }),
+  getCorrelationData: (stateFilter: string | null, volumeId: number | null, limit: number, offset: number) =>
+    invoke<CorrelationPageData>("get_correlation_data", { stateFilter, volumeId, limit, offset }),
   reviewCorrelationCandidate: (candidateId: number, reviewState: string, note: string | null) =>
     invoke<void>("review_correlation_candidate", { candidateId, reviewState, note }),
   // M3-B2 监控状态
@@ -378,6 +380,7 @@ export interface CorrSummary {
 export interface CorrelationPageData {
   overview: CorrOverview;
   candidates: CorrCandidateRow[];
+  total: number;
 }
 
 // ---------- M3-D：浏览器下载记录 ----------

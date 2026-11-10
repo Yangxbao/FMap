@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Card } from "../components/EmptyState";
 import { PageHeader } from "../components/PageHeader";
-import { api, IpcError, type CorrCandidateRow, type CorrelationPageData } from "../lib/ipc";
+import { api, IpcError, type CorrCandidateRow, type CorrelationPageData, type VolumeOverview } from "../lib/ipc";
 import {
   corrConfidenceLabel,
   corrSignalKindLabel,
@@ -165,15 +165,19 @@ function CandidateItem(props: {
 export function Correlation() {
   const [data, setData] = useState<CorrelationPageData | null>(null);
   const [filter, setFilter] = useState<string>("all");
+  const [volFilter, setVolFilter] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [recalcNote, setRecalcNote] = useState<string | null>(null);
+  const [volumes, setVolumes] = useState<VolumeOverview[]>([]);
+  const PAGE = 50;
 
   const load = useCallback(
-    (f: string) => {
+    (f: string, v: number | null, pageNo: number) => {
       setErr(null);
       api
-        .getCorrelationData(f === "all" ? null : f)
+        .getCorrelationData(f === "all" ? null : f, v, PAGE, pageNo * PAGE)
         .then(setData)
         .catch((e: unknown) => setErr(e instanceof IpcError ? e.message : String(e)));
     },
@@ -181,8 +185,16 @@ export function Correlation() {
   );
 
   useEffect(() => {
-    load(filter);
-  }, [load, filter]);
+    load(filter, volFilter, page);
+  }, [load, filter, volFilter, page]);
+
+  // 卷下拉数据源（失败静默——过滤是增强功能）
+  useEffect(() => {
+    api
+      .getVolumeOverviews()
+      .then(setVolumes)
+      .catch(() => undefined);
+  }, []);
 
   const recalc = async () => {
     setBusy(true);
@@ -195,7 +207,7 @@ export function Correlation() {
           `候选 ${s.computed}（新增 ${s.new_candidates} / 刷新 ${s.refreshed} / 清理过期 ${s.stale_removed}）` +
           `，代号 #${s.generation}。已审查的候选永久保留。`
       );
-      load(filter);
+      load(filter, volFilter, page);
     } catch (e: unknown) {
       setErr(e instanceof IpcError ? e.message : String(e));
     } finally {
@@ -208,7 +220,7 @@ export function Correlation() {
     setErr(null);
     try {
       await api.reviewCorrelationCandidate(id, state, null);
-      load(filter);
+      load(filter, volFilter, page);
     } catch (e: unknown) {
       setErr(e instanceof IpcError ? e.message : String(e));
     } finally {
@@ -268,8 +280,8 @@ export function Correlation() {
         </div>
       )}
 
-      {/* 状态过滤 */}
-      <div className="mb-2 flex gap-1.5">
+      {/* 状态过滤 + 卷过滤 */}
+      <div className="mb-2 flex flex-wrap items-center gap-1.5">
         {FILTERS.map((f) => (
           <button
             key={f.key}
@@ -279,7 +291,7 @@ export function Correlation() {
                 ? "border-[#4cc2ff] bg-[#4cc2ff]/10 text-[#4cc2ff]"
                 : "border-[#35373c] text-[#9aa0a6] hover:text-[#e8eaed]")
             }
-            onClick={() => setFilter(f.key)}
+            onClick={() => { setFilter(f.key); setPage(0); }}
           >
             {f.label}
             {f.key !== "all" && ov
@@ -287,6 +299,21 @@ export function Correlation() {
               : ""}
           </button>
         ))}
+        <select
+          className="ml-auto rounded border border-[#35373c] bg-[#1f2023] px-2 py-1 text-[11.5px] text-[#e8eaed] outline-none focus:border-[#4cc2ff]"
+          value={volFilter ?? ""}
+          onChange={(e) => {
+            setVolFilter(e.target.value === "" ? null : Number(e.target.value));
+            setPage(0);
+          }}
+        >
+          <option value="">全部卷</option>
+          {(volumes ?? []).map((v) => (
+            <option key={v.volume_id} value={v.volume_id}>
+              {v.root}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* 候选列表 */}
@@ -304,11 +331,35 @@ export function Correlation() {
           </div>
         </Card>
       ) : (
-        <Card>
-          {data.candidates.map((c) => (
-            <CandidateItem key={c.id} c={c} busy={busy} onReview={review} />
-          ))}
-        </Card>
+        <>
+          <Card>
+            {data.candidates.map((c) => (
+              <CandidateItem key={c.id} c={c} busy={busy} onReview={review} />
+            ))}
+          </Card>
+          {/* 分页 */}
+          {data.total > PAGE && (
+            <div className="mt-2 flex items-center justify-center gap-3 text-[12px]">
+              <button
+                className="rounded border border-[#35373c] px-3 py-1 text-[#9aa0a6] disabled:opacity-40"
+                disabled={page === 0}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+              >
+                上一页
+              </button>
+              <span className="text-[#9aa0a6]">
+                共 {data.total} 条 · 第 {page + 1} / {Math.ceil(data.total / PAGE)} 页
+              </span>
+              <button
+                className="rounded border border-[#35373c] px-3 py-1 text-[#9aa0a6] disabled:opacity-40"
+                disabled={(page + 1) * PAGE >= data.total}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                下一页
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
