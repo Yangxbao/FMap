@@ -73,7 +73,11 @@ pub fn get_tools_overview(
         .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
     let scan_db_id = match scan_id {
         Some(id) => id,
-        None => db.latest_scan_with_attr()?,
+        // 尚无归属数据 → 空列表（诚实空态；此前裸 rusqlite 错误直接漏到 UI）
+        None => match db.latest_scan_with_attr() {
+            Ok(id) => id,
+            Err(_) => return Ok(Vec::new()),
+        },
     };
     Ok(db.tools_overview(scan_db_id)?)
 }

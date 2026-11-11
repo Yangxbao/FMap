@@ -49,6 +49,12 @@ export function Monitor() {
     load();
   }, [load]);
 
+  // 实时监控页 10s 自动刷新（采集水位/gap 状态随时间变化；失败静默不打断）
+  useEffect(() => {
+    const timer = window.setInterval(load, 10_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
   return (
     <div>
       <PageHeader
@@ -58,8 +64,17 @@ export function Monitor() {
           逐目录授权的 RDCW 采集（设置页授权）+ 变更日志能力画像。
           事件不携带进程归属——ETW 需管理员权限，已被产品决策排除。
           卷级 USN Journal 同样需要管理员，在产品红线内<b>不启用</b>，能力探测如实展示。
+          本页每 10 秒自动刷新。
         
           </>
+        }
+        actions={
+          <button
+            className="rounded border border-[#4cc2ff] px-3 py-1.5 text-[12px] text-[#4cc2ff] transition-colors hover:bg-[#4cc2ff]/10"
+            onClick={load}
+          >
+            手动刷新
+          </button>
         }
       />
 

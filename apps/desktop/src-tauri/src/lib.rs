@@ -104,6 +104,19 @@ pub fn run() {
             {
                 Some(dir) => {
                     let db_path = dir.join("tracenest.db");
+                    // 迁移前自动备份（schema 落后时）：一致性快照落 backups/，
+                    // 保留最近 2 份。失败不阻塞启动（迁移为阶段事务），错误写 stderr。
+                    match tracenest_database::backup::backup_if_migration_pending(&db_path) {
+                        Ok(Some(b)) => eprintln!(
+                            "[FMap] 迁移前自动备份完成: v{} → {}",
+                            b.from_version,
+                            b.path.display()
+                        ),
+                        Ok(None) => {}
+                        Err(e) => {
+                            eprintln!("[FMap] 迁移前备份失败（继续启动；迁移为阶段事务）: {e}")
+                        }
+                    }
                     match Database::open(&db_path) {
                         Ok(db) => {
                             // 异常退出恢复：把非本实例的遗留 running 扫描标记为 failed

@@ -727,7 +727,7 @@ mod tests {
     /// 种子：卷 + scope 一致的扫描代 + 路径树 + 工具/规则 + 归属行。
     /// 路径树：PROJ/.claude(目录, dir 规则命中) / PROJ/CLAUDE.md(信号) / PROJ/a.txt(目标)。
     /// 返回 (db, 目标事件 id)
-    fn seeded(mut sig_claude_md_mtime: i64) -> (Database, i64) {
+    fn seeded(sig_claude_md_mtime: i64) -> (Database, i64) {
         let db = mem_db();
         let vol = db
             .upsert_volume("E:\\", None, None, None, Some("NTFS"), false)

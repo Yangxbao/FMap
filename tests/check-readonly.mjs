@@ -47,6 +47,12 @@ function walk(dir, out = []) {
 }
 
 const violations = [];
+// 精确例外：backup.rs 的迁移前自动备份保留策略（prune_old_backups）需要
+// remove_dir_all 清理超限的旧备份目录——删除对象被限定为
+// `{db_parent}/backups/pre-v*/`（本模块自己创建的产物），绝不指向用户文件。
+// 人工审查点：该文件中 remove_dir_all 的调用必须只出现在 prune_old_backups 内，
+// 且路径实参必须来自 backups_dir 拼接。违反即恢复门禁并重新评估。
+const ALLOW_REMOVE_DIR = /backup\.rs$/;
 for (const p of walk(ROOT)) {
   if (!p.endsWith(".rs")) continue;
   const full = readFileSync(p, "utf8");
@@ -57,7 +63,10 @@ for (const p of walk(ROOT)) {
   const src = testIdx >= 0 ? full.slice(0, testIdx) : full;
   for (const { re, why } of FORBIDDEN) {
     const m = src.match(re);
-    if (m) violations.push(`${p}: 出现 ${why}（${m[0]}）`);
+    if (!m) continue;
+    // 例外：备份保留策略（见上）
+    if (why === "删除目录" && ALLOW_REMOVE_DIR.test(p)) continue;
+    violations.push(`${p}: 出现 ${why}（${m[0]}）`);
   }
 }
 
