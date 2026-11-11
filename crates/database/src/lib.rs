@@ -1875,3 +1875,134 @@ fn map_event_row(r: &rusqlite::Row) -> rusqlite::Result<HistoryEventRow> {
         entity_id: r.get(6)?,
     })
 }
+
+// ==================== M5 总览页：最近发现的资产 ====================
+
+/// 最近发现的资产行（总览页"最近发现的资产"区块数据源；真实差分事件）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct RecentAssetRow {
+    pub event_id: i64,
+    pub ts: i64,
+    /// 卷根相对路径
+    pub rel_path: String,
+    /// 快照绝对路径（卷根 + 名称链；展示用）
+    pub abs_path: String,
+    pub volume_root: String,
+    /// 文件大小（字节；快照值，路径行缺失时 None）
+    pub size: Option<i64>,
+}
+
+impl Database {
+    /// 最近"首次观察到"的资产（file_discovered，时间倒序）。
+    /// 附绝对路径（批量构建，消除 N+1）与快照大小；无事件 → 空列表（诚实空态）。
+    pub fn recent_discovered_assets(&self, limit: i64) -> Result<Vec<RecentAssetRow>, CoreError> {
+        let lim = limit.clamp(1, 50);
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT e.id, e.ts, e.rel_path, e.volume_id, v.root, p.size, e.path_id
+                 FROM file_events e
+                 JOIN volumes v ON v.id = e.volume_id
+                 LEFT JOIN paths p ON p.id = e.path_id
+                 WHERE e.kind = 'file_discovered'
+                 ORDER BY e.ts DESC, e.id DESC LIMIT ?1",
+            )
+            .map_err(|e| CoreError::Database(format!("最近资产查询失败: {e}")))?;
+        let it = stmt
+            .query_map([lim], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, Option<i64>>(5)?,
+                    r.get::<_, Option<i64>>(6)?,
+                ))
+            })
+            .map_err(|e| CoreError::Database(format!("最近资产查询失败: {e}")))?;
+        type RecentRawRow = (i64, i64, String, String, Option<i64>, Option<i64>);
+        let mut raw: Vec<RecentRawRow> = Vec::new();
+        for row in it {
+            raw.push(row.map_err(|e| CoreError::Database(format!("最近资产读取失败: {e}")))?);
+        }
+        // 批量绝对路径（一次祖先层加载）
+        let ids: Vec<i64> = raw.iter().filter_map(|r| r.5).collect();
+        let abs_map = self.abs_paths_bulk(&ids).unwrap_or_default();
+        let mut out: Vec<RecentAssetRow> = Vec::new();
+        for (event_id, ts, rel_path, volume_root, size, path_id) in raw {
+            let abs = path_id
+                .and_then(|pid| abs_map.get(&pid).cloned())
+                .unwrap_or_else(|| format!("{volume_root}{rel_path}"));
+            out.push(RecentAssetRow {
+                event_id,
+                ts,
+                rel_path: rel_path.clone(),
+                abs_path: abs,
+                volume_root,
+                size,
+            });
+        }
+        Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod recent_asset_tests {
+    use super::*;
+
+    #[test]
+    fn t63_最近发现的资产_时间倒序_绝对路径_含快照大小() {
+        let db = Database::open(":memory:".as_ref()).unwrap();
+        let vol = db
+            .upsert_volume("E:\\", None, None, None, None, false)
+            .unwrap();
+        let scan = db
+            .begin_scan(&["E:\\".into()], "t", db.instance_id())
+            .unwrap();
+        let root = db
+            .insert_path(scan, vol, None, "E:", 0, true, 0, Some(0), 0)
+            .unwrap();
+        let novel = db
+            .insert_path(scan, vol, Some(root), "NOVEL", 1, true, 0, Some(0), 0)
+            .unwrap();
+        let c3 = db
+            .insert_path(scan, vol, Some(novel), "c3.md", 2, false, 300, Some(0), 0)
+            .unwrap();
+        let c4 = db
+            .insert_path(scan, vol, Some(novel), "c4.md", 2, false, 400, Some(0), 0)
+            .unwrap();
+        // 三条 discovered 事件（时间 100/200/300）
+        for (pid, rel, ts) in [(c3, "NOVEL/c3.md", 100), (c4, "NOVEL/c4.md", 200)] {
+            db.conn.execute(
+                "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,scan_id,detail)
+                 VALUES(?1,?2,?3,?4,?5,'file_discovered',?6,'{}')",
+                rusqlite::params![pid, vol, rel, rel.to_uppercase(), ts, scan],
+            ).unwrap();
+        }
+        // 一条老事件时间最早（检验倒序）
+        db.conn
+            .execute(
+                "INSERT INTO file_events(path_id,volume_id,rel_path,rel_key,ts,kind,scan_id,detail)
+             VALUES(?1,?2,'NOVEL/c2.md','NOVEL/C2.MD',50,'file_discovered',?3,'{}')",
+                rusqlite::params![novel, vol, scan],
+            )
+            .unwrap();
+        let rows = db.recent_discovered_assets(10).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].abs_path, r"E:\NOVEL\c4.md", "最新在前 + 绝对路径");
+        assert_eq!(rows[0].size, Some(400));
+        // limit 钳制
+        assert_eq!(db.recent_discovered_assets(2).unwrap().len(), 2);
+        assert_eq!(
+            db.recent_discovered_assets(0).unwrap().len(),
+            1,
+            "0 → 钳为 1"
+        );
+    }
+
+    #[test]
+    fn t64_无事件_空列表_诚实空态() {
+        let db = Database::open(":memory:".as_ref()).unwrap();
+        assert!(db.recent_discovered_assets(10).unwrap().is_empty());
+    }
+}

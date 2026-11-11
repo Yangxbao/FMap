@@ -239,6 +239,8 @@ export const api = {
     invoke<DiffRunRow[]>("get_diff_runs", { volumeId }),
   runDiffNow: (volumeId: number) =>
     invoke<DiffSummary>("run_diff_now", { volumeId }),
+  // M5 总览：最近发现的资产
+  getRecentAssets: (limit: number) => invoke<RecentAsset[]>("get_recent_assets", { limit }),
   // M5 关联分页/差分上限
   getDiffLimit: () => invoke<number>("get_diff_limit"),
   // M5 项目资产/报告中心
@@ -617,4 +619,13 @@ export interface ReportsData {
   tools: ToolUsageRow[];
   changes: VolumeChangeRow[];
   generated_at: number;
+}
+
+export interface RecentAsset {
+  event_id: number;
+  ts: number;
+  rel_path: string;
+  abs_path: string;
+  volume_root: string;
+  size: number | null;
 }

@@ -13,8 +13,13 @@ import {
   type ScanProgress,
   type SystemStatus,
   type VolumeInfo,
+  type RecentAsset,
 } from "../lib/ipc";
 import { formatBytes } from "../lib/format";
+
+function fmtTime(ms: number | null): string {
+  return ms ? new Date(ms).toLocaleString("zh-CN") : "—";
+}
 
 const SCAN_STATUS_LABEL: Record<string, string> = {
   pending: "等待扫描", running: "扫描中", done: "已完成", cancelled: "已取消",
@@ -423,7 +428,51 @@ export function Overview(props: { status: SystemStatus | null; error: string | n
       )}
 
       <h2 className="mb-2.5 mt-5 text-[14px] font-semibold">最近发现的资产</h2>
-      <DevPlaceholder feature="AI 资产发现" milestone="M1–M2" note="依赖扫描引擎（M1）与 AI 目录规则库（M2）。" />
+      <RecentAssets connected={connected} />
     </div>
+  );
+}
+
+/** 最近发现的资产（真实差分事件 file_discovered，时间倒序）。
+ *  口径：「首次观察到」≠ 刚刚创建；失败静默降级为空态提示。 */
+function RecentAssets(props: { connected: boolean }) {
+  const [assets, setAssets] = useState<RecentAsset[] | null>(null);
+  useEffect(() => {
+    if (!props.connected) return;
+    api
+      .getRecentAssets(8)
+      .then(setAssets)
+      .catch(() => setAssets([]));
+  }, [props.connected]);
+  if (!props.connected) return null;
+  if (assets === null) return <div className="text-[12px] text-[#9aa0a6]">读取中…</div>;
+  if (assets.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed border-[#35373c] bg-[#1f2023] px-6 py-8 text-center">
+        <div className="text-[13px] text-[#9aa0a6]">尚无「首次观察到」的资产</div>
+        <div className="mt-1.5 text-[12px] text-[#6b7075]">
+          扫描两次后，第二次新观察到的文件会出现在这里（含新装的 AI 工具产物）。
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Card>
+      {assets.map((a) => (
+        <div
+          key={a.event_id}
+          className="flex flex-wrap items-center gap-2.5 border-b border-[#35373c] px-1 py-2 text-[12px] last:border-0"
+        >
+          <span className="w-36 shrink-0 text-[#6b7075]">{fmtTime(a.ts)}</span>
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] text-[#e8eaed]" title={a.abs_path}>
+            {a.abs_path}
+          </span>
+          <span className="shrink-0 text-[#6b7075]">{formatBytes(a.size)}</span>
+        </div>
+      ))}
+      <div className="mt-1 text-[11px] text-[#6b7075]">
+        「首次观察到」来自相邻两次扫描的差分（M3-B1），不代表文件刚刚创建——详见历史追踪页。
+      </div>
+    </Card>
   );
 }

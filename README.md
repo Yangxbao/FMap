@@ -10,7 +10,7 @@
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-blue)](#%EF%B8%8F-快速上手)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://www.rust-lang.org/)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-green)](#license)
-[![Release](https://img.shields.io/badge/release-v0.1.0-purple)](https://github.com/Yangxbao/FMap/releases)
+[![Release](https://img.shields.io/badge/release-v0.2.0-purple)](https://github.com/Yangxbao/FMap/releases/latest)
 
 **本地运行 · 完全只读 · 零网络出站 · 不需要管理员**
 
@@ -61,6 +61,10 @@ FMap 用**纯只读**的方式回答这些问题——它是一个"文件资产�
 每条结论都附带可展开的证据链（命中了哪条规则、哪个信号文件）；
 每条关联候选都写明时间差、窗口和信号来源——**可解释、可否认、可撤销**。
 
+| 项目资产（工作区聚合） | 报告中心（卸载清单） |
+|---|---|
+| ![项目资产](.github/assets/projects.png) | ![报告中心](.github/assets/reports.png) |
+
 | 文件浏览（快照 + 搜索） | 磁盘地图 | 历史追踪 |
 |---|---|---|
 | ![文件浏览](.github/assets/file-browser.png) | ![磁盘地图](.github/assets/disk-map.png) | ![历史追踪](.github/assets/history-events.png) |
@@ -69,7 +73,13 @@ FMap 用**纯只读**的方式回答这些问题——它是一个"文件资产�
 
 ## ⚡️ 快速上手
 
-### 方式一：从源码运行（当前版本推荐）
+### 方式零：下载安装包（最简单）
+
+从 [Releases](https://github.com/Yangxbao/FMap/releases/latest) 下载
+`FMap_x.y.z_x64-setup.exe`（约 3MB，Windows 10/11 x64），运行即装——
+普通用户权限、免管理员、支持静默安装 `/S`。装完从开始菜单启动 FMap 即可。
+
+### 方式一：从源码运行
 
 ```bash
 git clone https://github.com/Yangxbao/FMap.git

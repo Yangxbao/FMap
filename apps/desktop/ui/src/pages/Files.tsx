@@ -149,6 +149,8 @@ export function Files() {
   const [err, setErr] = useState<string | null>(null);
 
   const navigateTo = useCallback((pathId: number) => {
+    // hash 同步：刷新/回退/复制链接都能回到当前目录（同页 setPage 幂等，不重挂载）。
+    location.hash = `#/files?path=${pathId}`;
     setErr(null);
     setSearchHits(null);
     setSearchQuery("");

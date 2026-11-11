@@ -464,3 +464,37 @@ pub fn get_diff_limit(state: State<'_, AppState>) -> Result<i64, CommandError> {
         .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
     Ok(diff_pass::configured_max_diff_events(db) as i64)
 }
+
+/// 最近发现的资产（总览页"最近发现的资产"区块；真实差分事件）。
+#[derive(serde::Serialize)]
+pub struct RecentAsset {
+    pub event_id: i64,
+    pub ts: i64,
+    pub rel_path: String,
+    pub abs_path: String,
+    pub volume_root: String,
+    pub size: Option<i64>,
+}
+
+#[tauri::command]
+pub fn get_recent_assets(
+    state: State<'_, AppState>,
+    limit: Option<i64>,
+) -> Result<Vec<RecentAsset>, CommandError> {
+    let guard = state.db.lock().unwrap();
+    let db = guard
+        .as_ref()
+        .ok_or_else(|| CommandError::database(DB_NOT_READY))?;
+    Ok(db
+        .recent_discovered_assets(limit.unwrap_or(8))?
+        .into_iter()
+        .map(|r| RecentAsset {
+            event_id: r.event_id,
+            ts: r.ts,
+            rel_path: r.rel_path,
+            abs_path: r.abs_path,
+            volume_root: r.volume_root,
+            size: r.size,
+        })
+        .collect())
+}
