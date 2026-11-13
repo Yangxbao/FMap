@@ -501,6 +501,26 @@ impl Database {
             .map_err(|e| CoreError::Database(format!("尚无归属分析结果: {e}")))
     }
 
+    /// 每个卷的最新有路径扫描代（多卷归属分析入口；v0.2.1）。
+    /// 只统计未删除路径；无路径的卷不出现。
+    pub fn latest_scans_per_volume(&self) -> Result<Vec<(i64, i64)>, CoreError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT volume_id, MAX(scan_id) FROM paths
+                 WHERE deleted_at IS NULL GROUP BY volume_id ORDER BY volume_id",
+            )
+            .map_err(|e| CoreError::Database(format!("卷最新代查询失败: {e}")))?;
+        let it = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+            .map_err(|e| CoreError::Database(format!("卷最新代查询失败: {e}")))?;
+        let mut out = Vec::new();
+        for row in it {
+            out.push(row.map_err(|e| CoreError::Database(format!("卷最新代读取失败: {e}")))?);
+        }
+        Ok(out)
+    }
+
     /// 工具 Top 路径原始行（id, name, is_dir, size, confidence）。
     pub fn tool_top_paths(
         &self,
